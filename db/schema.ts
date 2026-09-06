@@ -40,10 +40,27 @@ export const users = sqliteTable(
     externalUserId: text('external_user_id').notNull(),
     email: text('email').notNull(),
     displayName: text('display_name'),
+    status: text('status', {
+      enum: ['pending', 'active', 'suspended'],
+    })
+      .notNull()
+      .default('pending'),
     ...ts,
   },
   (t) => [uniqueIndex('users_external_uq').on(t.externalUserId)],
 );
+
+export const roles = sqliteTable('roles', {
+  id: text('id').primaryKey(),
+  organizationId: text('organization_id')
+    .notNull()
+    .references(() => organizations.id),
+  name: text('name').notNull(),
+  description: text('description'),
+  permissionsJson: text('permissions_json').notNull(),
+  ...ts,
+});
+
 export const userShopRoles = sqliteTable(
   'user_shop_roles',
   {
@@ -56,8 +73,9 @@ export const userShopRoles = sqliteTable(
       .references(() => users.id),
     shopId: text('shop_id').references(() => shops.id),
     role: text('role', {
-      enum: ['admin', 'shop_manager', 'staff', 'viewer'],
+      enum: ['admin', 'shop_manager', 'staff', 'viewer', 'custom'],
     }).notNull(),
+    roleId: text('role_id').references(() => roles.id),
     ...ts,
   },
   (t) => [

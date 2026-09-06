@@ -7,13 +7,17 @@ import {
 } from '@/lib/gemini';
 import {
   errorResponse,
+  getAllowedShops,
+  hasPermission,
   ORGANIZATION_ID,
   protectExtraction,
-  requireAuthorizedUser,
+  requirePermission,
   revealExtraction,
+  SENSITIVE_FIELDS,
   SHOP_NAMES,
   type MotoworksEnv,
 } from '@/lib/server/motoworks';
+import type { ReviewStatus } from '@/lib/domain';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,7 +51,8 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const user = await requireAuthorizedUser(request, runtime, shopId);
+    // 사진 등록 권한 검증
+    const user = await requirePermission(request, runtime, 'upload', shopId);
     const files = form
       .getAll('files')
       .filter((value): value is File => value instanceof File);
@@ -238,28 +243,55 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   const runtime = env as unknown as MotoworksEnv;
   try {
-    await requireAuthorizedUser(request, runtime);
-    const rows = await runtime.DB.prepare(
-      `SELECT d.id, d.original_file_name, d.shop_id, s.name AS shop_name
-         FROM documents d
-         JOIN review_tasks rt ON rt.document_id = d.id
-         LEFT JOIN shops s ON s.id = d.shop_id
-        WHERE d.organization_id = ?1 AND rt.status = 'pending'
-        ORDER BY d.created_at DESC
-        LIMIT 100`,
-    )
-      .bind(ORGANIZATION_ID)
+    const user = await requirePermission(request, runtime, 'view');
+    const url = new URL(request.url);
+    const statusParam = url.searchParams.get('status') || 'pending';
+    const shopParam = url.searchParams.get('shopId');
+
+    const allowedShops = getAllowedShops(user, 'view');
+    if (allowedShops.length === 0) {
+      return Response.json({ documents: [] });
+    }
+
+    const targetShops = shopParam
+      ? allowedShops.filter((s) => s === shopParam)
+      : allowedShops;
+
+    if (targetShops.length === 0) {
+      return Response.json({ documents: [] });
+    }
+
+    const shopPlaceholders = targetShops.map(() => '?').join(',');
+    let sql = `SELECT d.id, d.original_file_name, d.shop_id, s.name AS shop_name, rt.status AS review_status
+                 FROM documents d
+                 JOIN review_tasks rt ON rt.document_id = d.id
+                 LEFT JOIN shops s ON s.id = d.shop_id
+                WHERE d.organization_id = ? AND d.shop_id IN (${shopPlaceholders})`;
+    const params: unknown[] = [ORGANIZATION_ID, ...targetShops];
+
+    if (statusParam !== 'all') {
+      sql += ' AND rt.status = ?';
+      params.push(statusParam);
+    }
+
+    sql += ' ORDER BY d.created_at DESC LIMIT 100';
+
+    const rows = await runtime.DB.prepare(sql)
+      .bind(...params)
       .all<{
         id: string;
         original_file_name: string;
         shop_id: string;
         shop_name: string;
+        review_status: string;
       }>();
+
+    const canViewPii = hasPermission(user, 'view_pii');
 
     const documents = await Promise.all(
       rows.results.map(async (row) => {
         const fieldRows = await runtime.DB.prepare(
-          `SELECT id, field_key, raw_value, normalized_value, confidence,
+          `SELECT id, field_key, raw_value, normalized_value, corrected_value, confidence,
                   bounding_box_json, validation_status, validation_message
              FROM extracted_fields
             WHERE document_id = ?1
@@ -271,40 +303,85 @@ export async function GET(request: Request) {
             field_key: string;
             raw_value: string | null;
             normalized_value: string | null;
+            corrected_value: string | null;
             confidence: number;
             bounding_box_json: string;
             validation_status: 'valid' | 'review' | 'conflict';
             validation_message: string | null;
           }>();
+
         const stored: GeminiExtraction = {
           document_id: row.id,
           fields: fieldRows.results.map((field) => ({
             key: field.field_key,
             raw_value: field.raw_value,
-            normalized_value: field.normalized_value,
+            normalized_value: field.corrected_value ?? field.normalized_value,
             confidence: field.confidence,
             bounding_box: safeBox(field.bounding_box_json),
             validation_status: field.validation_status,
             validation_message: field.validation_message,
           })),
         };
-        const extraction = await revealExtraction(
-          stored,
-          runtime.DATA_ENCRYPTION_KEY,
-        );
-        return extractionToReviewDocument({
+
+        const extraction = canViewPii
+          ? await revealExtraction(stored, runtime.DATA_ENCRYPTION_KEY)
+          : maskExtractionPii(
+              await revealExtraction(stored, runtime.DATA_ENCRYPTION_KEY),
+            );
+
+        const doc = extractionToReviewDocument({
           extraction,
           fileName: row.original_file_name,
           shopName: row.shop_name || SHOP_NAMES[row.shop_id] || '센터 확인',
           sourceUrl: `/api/documents/${encodeURIComponent(row.id)}/source`,
           fieldIds: fieldRows.results.map((field) => field.id),
         });
+
+        doc.status = (row.review_status as ReviewStatus) || 'pending';
+
+        // 사람의 수정값 복원
+        doc.fields = doc.fields.map((f, idx) => {
+          const original = fieldRows.results[idx - 1]; // first field is shop
+          if (original?.corrected_value !== null && original?.corrected_value !== undefined) {
+            const decVal = extraction.fields[idx - 1]?.normalized_value;
+            return {
+              ...f,
+              correctedValue: decVal ? String(decVal) : f.normalizedValue,
+            };
+          }
+          return f;
+        });
+
+        return doc;
       }),
     );
     return Response.json({ documents });
   } catch (error) {
     return errorResponse(error);
   }
+}
+
+function maskExtractionPii(extraction: GeminiExtraction): GeminiExtraction {
+  return {
+    ...extraction,
+    fields: extraction.fields.map((f) => {
+      if (!SENSITIVE_FIELDS.has(f.key) || !f.normalized_value) return f;
+      const str = String(f.normalized_value);
+      let masked = str;
+      if (f.key === 'customer_name') {
+        masked = str.length > 2 ? `${str[0]}*${str.slice(2)}` : `${str[0]}*`;
+      } else if (f.key === 'phone') {
+        masked = str.replace(/(\d{3})[- ]?(\d{3,4})[- ]?(\d{4})/, '$1-****-$3');
+      } else if (f.key === 'vehicle_plate') {
+        masked = str.replace(/(\d{2,3}[가-힣]\s*)(\d{4})/, '$1****');
+      }
+      return {
+        ...f,
+        raw_value: masked,
+        normalized_value: masked,
+      };
+    }),
+  };
 }
 
 function validateFiles(files: File[]) {

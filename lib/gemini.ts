@@ -87,6 +87,9 @@ export async function extractMaintenanceDocument(input: {
   assignedShopName: string;
   fetchImpl?: typeof fetch;
 }): Promise<GeminiExtraction> {
+  if (!input.apiKey || !input.apiKey.trim()) {
+    throw new Error('Gemini API 키가 설정되지 않았습니다.');
+  }
   const model = input.model || GEMINI_DEFAULT_MODEL;
   const fetchImpl = input.fetchImpl ?? fetch;
   const response = await fetchImpl(

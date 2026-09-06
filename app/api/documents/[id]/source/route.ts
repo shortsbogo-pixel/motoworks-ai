@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import {
   errorResponse,
-  requireAuthorizedUser,
+  requirePermission,
   type MotoworksEnv,
 } from '@/lib/server/motoworks';
 
@@ -27,7 +27,7 @@ export async function GET(
         shop_id: string;
       }>();
     if (!document) return new Response('Not found', { status: 404 });
-    await requireAuthorizedUser(request, runtime, document.shop_id);
+    await requirePermission(request, runtime, 'view', document.shop_id);
     const object = await runtime.FILES.get(document.original_object_key);
     if (!object) return new Response('Not found', { status: 404 });
     return new Response(object.body, {

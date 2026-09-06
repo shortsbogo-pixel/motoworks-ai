@@ -29,7 +29,7 @@ import {
   Users,
   WalletCards,
   X,
-} from 'lucide-react';
+} from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -155,47 +155,213 @@ type ProcessingSummary = {
   failed: number;
 };
 
+export type OrderRecord = {
+  id: string;
+  shopId: string;
+  shopName: string;
+  serviceDate: string;
+  serviceType: string;
+  status: string;
+  totalAmount: number;
+  customerName: string;
+  phone: string;
+  vehicleModel: string;
+  plate: string;
+  createdAt: number;
+  items?: Array<{
+    normalized_name: string | null;
+    quantity: number;
+    unit_price: number;
+    amount: number;
+  }>;
+  payments?: Array<{
+    method: string;
+    amount: number;
+    paid_at: number | null;
+    note: string | null;
+  }>;
+};
+
+export type CustomerRecord = {
+  id: string;
+  shopId: string;
+  shopName: string;
+  name: string;
+  phone: string;
+  status: string;
+  createdAt: number;
+  vehicles: Array<{
+    id: string;
+    model: string;
+    plate: string;
+    certainty: string;
+  }>;
+};
+
+export type RentalRecord = {
+  id: string;
+  shopId: string;
+  shopName: string;
+  company: string;
+  vehicle: string;
+  base: number;
+  customer: number;
+  billed: number;
+  paid: number;
+  due: number;
+  status: string;
+};
+
+export type AuditLogRecord = {
+  id: string;
+  shopName: string;
+  actorName: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  detail: unknown;
+  createdAt: number;
+};
+
+export type DashboardStats = {
+  totalOrders: number;
+  totalRevenue: number;
+  pendingReviewCount: number;
+  rentalOutstanding: number;
+  shops: Array<{
+    id: string;
+    name: string;
+    orderCount: number;
+    revenue: number;
+  }>;
+};
+
+export type UserAssignment = {
+  id: string;
+  shopId: string | null;
+  shopName: string;
+  role: string;
+  roleId: string | null;
+  roleName: string;
+};
+
+export type UserRecord = {
+  id: string;
+  email: string;
+  displayName: string;
+  status: string;
+  createdAt: number;
+  assignments: UserAssignment[];
+};
+
+export type RoleRecord = {
+  id: string;
+  name: string;
+  description: string | null;
+  permissions: string[];
+  createdAt: number;
+};
+
 export function AppShell({ userName }: { userName: string }) {
   const [view, setView] = useState<View>('dashboard');
   const [documents, setDocuments] = useState<ReviewDocument[]>([]);
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [customers, setCustomers] = useState<CustomerRecord[]>([]);
+  const [rentals, setRentals] = useState<RentalRecord[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([]);
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null);
+  const [usersData, setUsersData] = useState<{ users: UserRecord[]; roles: RoleRecord[] }>({
+    users: [],
+    roles: [],
+  });
+
   const [selectedId, setSelectedId] = useState('');
   const [processingSummary, setProcessingSummary] =
     useState<ProcessingSummary | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notice, setNotice] = useState('');
+
   const pending = documents.filter(
     (document) => document.status === 'pending',
   ).length;
   const approvedToday = documents.filter(
     (document) => document.status === 'approved',
   );
-  const approvedRevenue = approvedToday.reduce(
-    (sum, document) => sum + document.amount,
-    0,
-  );
+  const approvedRevenue = orders.length > 0
+    ? orders.reduce((sum, ord) => sum + ord.totalAmount, 0)
+    : approvedToday.reduce((sum, doc) => sum + doc.amount, 0);
+
   const navigate = (next: View) => {
     setView(next);
     setSidebarOpen(false);
     setNotice('');
   };
 
+  const refreshAllData = async () => {
+    try {
+      // 1. 검수 문서 전체 조회 (pending + approved)
+      const extRes = await fetch('/api/extractions?status=all', { cache: 'no-store' });
+      if (extRes.ok) {
+        const payload = (await extRes.json()) as { documents?: ReviewDocument[] };
+        if (payload?.documents) {
+          setDocuments(payload.documents);
+          setSelectedId((cur) => cur || payload.documents?.[0]?.id || '');
+        }
+      }
+
+      // 2. 승인된 정비내역
+      const ordRes = await fetch('/api/orders', { cache: 'no-store' });
+      if (ordRes.ok) {
+        const payload = (await ordRes.json()) as { orders?: OrderRecord[] };
+        if (payload?.orders) setOrders(payload.orders);
+      }
+
+      // 3. 대시보드 통계
+      const dashRes = await fetch('/api/dashboard', { cache: 'no-store' });
+      if (dashRes.ok) {
+        const payload = (await dashRes.json()) as DashboardStats;
+        setDashboardStats(payload);
+      }
+
+      // 4. 고객/차량
+      const custRes = await fetch('/api/customers', { cache: 'no-store' });
+      if (custRes.ok) {
+        const payload = (await custRes.json()) as { customers?: CustomerRecord[] };
+        if (payload?.customers) setCustomers(payload.customers);
+      }
+
+      // 5. 렌트 정산
+      const rentRes = await fetch('/api/rentals', { cache: 'no-store' });
+      if (rentRes.ok) {
+        const payload = (await rentRes.json()) as { rentals?: RentalRecord[] };
+        if (payload?.rentals) setRentals(payload.rentals);
+      }
+
+      // 6. 사용자/권한
+      const userRes = await fetch('/api/users', { cache: 'no-store' });
+      if (userRes.ok) {
+        const payload = (await userRes.json()) as { users: UserRecord[]; roles: RoleRecord[] };
+        setUsersData(payload);
+      }
+
+      // 7. 감사 이력
+      const auditRes = await fetch('/api/audit', { cache: 'no-store' });
+      if (auditRes.ok) {
+        const payload = (await auditRes.json()) as { logs?: AuditLogRecord[] };
+        if (payload?.logs) setAuditLogs(payload.logs);
+      }
+    } catch {
+      // ignore background fetch errors
+    }
+  };
+
   useEffect(() => {
-    let active = true;
-    fetch('/api/extractions', { cache: 'no-store' })
-      .then(async (response) => {
-        if (!response.ok) return null;
-        return (await response.json()) as { documents?: ReviewDocument[] };
-      })
-      .then((payload) => {
-        if (!active || !payload?.documents) return;
-        setDocuments(payload.documents);
-        setSelectedId((current) => current || payload.documents?.[0]?.id || '');
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
+    const timer = setTimeout(() => {
+      void refreshAllData();
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
+
 
   return (
     <div className="min-h-screen bg-[#f3f7f6] text-[#102522]">
@@ -306,6 +472,8 @@ export function AppShell({ userName }: { userName: string }) {
               pending={pending}
               approvedCount={approvedToday.length}
               approvedRevenue={approvedRevenue}
+              stats={dashboardStats}
+              orders={orders}
               navigate={navigate}
             />
           )}
@@ -317,6 +485,7 @@ export function AppShell({ userName }: { userName: string }) {
               navigate={navigate}
               setSelectedId={setSelectedId}
               setProcessingSummary={setProcessingSummary}
+              onUploaded={refreshAllData}
             />
           )}
           {view === 'processing' && (
@@ -333,20 +502,37 @@ export function AppShell({ userName }: { userName: string }) {
               selectedId={selectedId}
               setSelectedId={setSelectedId}
               setNotice={setNotice}
+              onDataChanged={refreshAllData}
             />
           )}
-          {view === 'orders' && <Orders approved={approvedToday} />}
-          {view === 'customers' && <Customers />}
-          {view === 'rentals' && <Rentals />}
+          {view === 'orders' && <Orders approved={approvedToday} orders={orders} />}
+          {view === 'customers' && <Customers customers={customers} />}
+          {view === 'rentals' && <Rentals rentals={rentals} />}
           {view === 'analytics' && (
-            <Analytics approvedRevenue={approvedRevenue} />
+            <Analytics
+              approvedRevenue={approvedRevenue}
+              orders={orders}
+              stats={dashboardStats}
+            />
           )}
           {view === 'standards' && <Standards />}
           {view === 'excel' && (
-            <ExcelView documents={documents} setNotice={setNotice} />
+            <ExcelView
+              documents={documents}
+              orders={orders}
+              setNotice={setNotice}
+            />
           )}
-          {view === 'users' && <UsersView />}
-          {view === 'audit' && <Audit documents={documents} />}
+          {view === 'users' && (
+            <UsersView
+              users={usersData.users}
+              roles={usersData.roles}
+              onRefresh={refreshAllData}
+            />
+          )}
+          {view === 'audit' && (
+            <Audit documents={documents} auditLogs={auditLogs} />
+          )}
         </div>
         <nav
           aria-label="모바일 주요 메뉴"
@@ -387,42 +573,61 @@ function Dashboard({
   pending,
   approvedCount,
   approvedRevenue,
+  stats,
+  orders,
   navigate,
 }: {
   pending: number;
   approvedCount: number;
   approvedRevenue: number;
+  stats: DashboardStats | null;
+  orders: OrderRecord[];
   navigate: (view: View) => void;
 }) {
+  const effectivePending = stats ? stats.pendingReviewCount : pending;
+  const effectiveApprovedCount = stats ? stats.totalOrders : approvedCount;
+  const effectiveRevenue = stats ? stats.totalRevenue : approvedRevenue;
+
+  const displayRows = orders.length > 0
+    ? orders.slice(0, 5).map((o) => ({
+        id: o.id,
+        customer: o.customerName,
+        vehicle: `${o.vehicleModel || '차종 미지정'} · ${o.plate || '번호 미지정'}`,
+        shop: o.shopName,
+        amount: o.totalAmount,
+        status: 'DB 승인완료',
+      }))
+    : recentOrders;
+
   return (
     <div className="space-y-7">
       <section className="grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-4">
         <Metric
           label="검수 대기"
-          value={`${pending}건`}
-          note="원본 자료 미수신"
+          value={`${effectivePending}건`}
+          note={effectivePending > 0 ? "사람의 확인이 필요한 정비서" : "모든 정비서 검수 완료"}
           icon={ClipboardCheck}
           tone="amber"
           onClick={() => navigate('review')}
         />
         <Metric
           label="오늘 승인"
-          value={`${approvedCount}건`}
-          note="승인 완료된 정비"
+          value={`${effectiveApprovedCount}건`}
+          note="DB 영구 저장 완료된 정비"
           icon={BadgeCheck}
           tone="green"
         />
         <Metric
           label="오늘 반영 매출"
-          value={won.format(approvedRevenue)}
-          note="검수 승인분만 집계"
+          value={won.format(effectiveRevenue)}
+          note="검수 승인분만 정밀 집계"
           icon={CircleDollarSign}
           tone="blue"
         />
         <Metric
           label="AI 자동등록"
           value="0건"
-          note="기준 신뢰도 96%"
+          note="기준 신뢰도 96% 미만 자동차단"
           icon={ScanLine}
           tone="purple"
         />
@@ -532,13 +737,15 @@ function Dashboard({
         <div className="flex items-center justify-between border-b border-[#e2ece9] p-5 sm:p-6">
           <div>
             <p className="eyebrow">최근 기록</p>
-            <h2 className="section-title">승인된 정비</h2>
+            <h2 className="section-title">
+              승인된 정비 {orders.length > 0 ? `(${orders.length}건 DB 영구저장됨)` : '(참조 예시)'}
+            </h2>
           </div>
           <Button variant="ghost" onClick={() => navigate('orders')}>
             전체 보기 <ChevronRight size={16} />
           </Button>
         </div>
-        <OrderTable rows={recentOrders} />
+        <OrderTable rows={displayRows} />
       </section>
     </div>
   );
@@ -592,6 +799,7 @@ function Upload({
   navigate,
   setSelectedId,
   setProcessingSummary,
+  onUploaded,
 }: {
   documents: ReviewDocument[];
   setDocuments: (value: ReviewDocument[]) => void;
@@ -599,6 +807,7 @@ function Upload({
   navigate: (view: View) => void;
   setSelectedId: (value: string) => void;
   setProcessingSummary: (value: ProcessingSummary) => void;
+  onUploaded?: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -633,6 +842,7 @@ function Upload({
           : `${payload.succeeded}장을 Gemini 3.8 Flash로 판독해 검수함에 등록했습니다.`,
       );
       navigate('processing');
+      onUploaded?.();
     } catch (error) {
       setNotice(
         error instanceof Error ? error.message : '사진 판독에 실패했습니다.',
@@ -877,12 +1087,14 @@ function Review({
   selectedId,
   setSelectedId,
   setNotice,
+  onDataChanged,
 }: {
   documents: ReviewDocument[];
   setDocuments: (value: ReviewDocument[]) => void;
   selectedId: string;
   setSelectedId: (id: string) => void;
   setNotice: (value: string) => void;
+  onDataChanged?: () => void;
 }) {
   const [resolving, setResolving] = useState(false);
   const pendingDocs = documents.filter(
@@ -940,6 +1152,7 @@ function Review({
           ? '승인했습니다. 판독값과 승인 이력을 영구 저장했습니다.'
           : '반려했습니다. 원본과 판독 데이터는 감사 이력에 보존됩니다.',
       );
+      onDataChanged?.();
     } catch (error) {
       setNotice(
         error instanceof Error ? error.message : '검수 결과를 저장하지 못했습니다.',
@@ -1212,36 +1425,77 @@ function DocumentPreview({ document }: { document: ReviewDocument }) {
   );
 }
 
-function Orders({ approved }: { approved: ReviewDocument[] }) {
-  const rows = [
-    ...approved.map((d) => ({
-      id: d.id,
-      customer: d.customerName,
-      vehicle: d.vehicleLabel,
-      shop: d.shopName,
-      amount: d.amount,
-      status: '오늘 승인',
-    })),
-    ...recentOrders,
-  ];
+function Orders({
+  approved,
+  orders,
+}: {
+  approved: ReviewDocument[];
+  orders: OrderRecord[];
+}) {
+  const isDbLive = orders.length > 0;
+  const rows = isDbLive
+    ? orders.map((o) => ({
+        id: o.id,
+        customer: o.customerName,
+        vehicle: `${o.vehicleModel || '차종 미지정'} · ${o.plate || '번호 미지정'}`,
+        shop: o.shopName,
+        amount: o.totalAmount,
+        status: 'DB 승인완료',
+      }))
+    : [
+        ...approved.map((d) => ({
+          id: d.id,
+          customer: d.customerName,
+          vehicle: d.vehicleLabel,
+          shop: d.shopName,
+          amount: d.amount,
+          status: '오늘 승인 (임시)',
+        })),
+        ...recentOrders.map((r) => ({
+          ...r,
+          status: `${r.status} (참조 예시)`,
+        })),
+      ];
+
+  const paymentBreakdown = {
+    card: 0,
+    cash: 0,
+    transfer: 0,
+  };
+  if (isDbLive) {
+    for (const ord of orders) {
+      if (ord.payments) {
+        for (const p of ord.payments) {
+          if (p.method === 'card') paymentBreakdown.card += p.amount;
+          else if (p.method === 'cash') paymentBreakdown.cash += p.amount;
+          else if (p.method === 'transfer') paymentBreakdown.transfer += p.amount;
+        }
+      }
+    }
+  }
+
   return (
     <section className="panel overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e2ece9] p-5 sm:p-6">
         <div>
-          <p className="eyebrow">승인 데이터</p>
-          <h2 className="section-title">정비내역 {rows.length}건 표시</h2>
+          <p className="eyebrow">{isDbLive ? '실제 영구 저장 데이터' : '기준 예시 데이터'}</p>
+          <h2 className="section-title">
+            정비내역 {rows.length}건 {isDbLive ? '(DB 동기화 완료)' : '(검증 대기)'}
+          </h2>
         </div>
-        <Button className="rounded-xl bg-[#0d6d5d]">
-          <ReceiptText size={16} /> 정비 등록
-        </Button>
+        <Badge variant={isDbLive ? 'default' : 'outline'} className={isDbLive ? 'bg-[#0d6d5d] text-white' : ''}>
+          {isDbLive ? '영구 데이터베이스 반영됨' : '참조 기준값'}
+        </Badge>
       </div>
       <OrderTable rows={rows} />
       <div className="border-t border-[#e2ece9] bg-[#f8fbfa] p-5">
-        <p className="text-sm font-semibold">분할 결제 예시</p>
+        <p className="text-sm font-semibold">
+          {isDbLive ? '실제 집계된 결제 수단별 금액' : '분할 결제 예시'}
+        </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
-          <PaymentPart method="카드" amount={30000} />
-          <PaymentPart method="현금" amount={10000} />
-          <PaymentPart method="이체" amount={5000} />
+          <PaymentPart method="카드" amount={isDbLive ? paymentBreakdown.card : 30000} />
+          <PaymentPart method="현금" amount={isDbLive ? paymentBreakdown.cash : 10000} />
+          <PaymentPart method="이체" amount={isDbLive ? paymentBreakdown.transfer : 5000} />
         </div>
       </div>
     </section>
@@ -1299,23 +1553,35 @@ function OrderTable({
   );
 }
 
-function Customers() {
-  const people = [
-    ['김○수', '010-****-2187', 'PCX 125 · 1대', '확정 연결'],
-    ['박○진', '010-****-7720', 'NMAX 125 · 2대', '연결 후보'],
-    ['이○호', '010-****-0041', '보이저 후보 · 1대', '연결 후보'],
-  ];
+function Customers({ customers }: { customers: CustomerRecord[] }) {
+  const isDbLive = customers.length > 0;
+  const people: Array<[string, string, string, string]> = isDbLive
+    ? customers.map((c) => [
+        c.name,
+        c.phone,
+        `${c.vehicles[0]?.model || '차량'} (${c.vehicles[0]?.plate || '번호'}) · ${c.vehicles.length}대 (${c.shopName})`,
+        c.status === 'active' ? '확정 연결 (DB)' : '검토 중',
+      ])
+    : [
+        ['김○수', '010-****-2187', 'PCX 125 · 1대', '확정 연결 (참조)'],
+        ['박○진', '010-****-7720', 'NMAX 125 · 2대', '연결 후보 (참조)'],
+        ['이○호', '010-****-0041', '보이저 후보 · 1대', '연결 후보 (참조)'],
+      ];
+
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
       <section className="panel overflow-hidden">
-        <PanelTitle eyebrow="고객 목록" title="연결된 차량과 방문 이력" />
+        <PanelTitle
+          eyebrow={isDbLive ? 'DB 등록 고객' : '고객 목록'}
+          title={`연결된 차량과 방문 이력 (${isDbLive ? `${customers.length}명 등록됨` : '참조 예시'})`}
+        />
         {people.map(([name, phone, vehicle, status]) => (
           <div
-            key={phone}
+            key={phone + vehicle}
             className="flex flex-wrap items-center gap-4 border-t border-[#e5eeec] p-5"
           >
             <div className="grid h-11 w-11 place-items-center rounded-full bg-[#dff4ef] font-black text-[#0d6d5d]">
-              {name[0]}
+              {name[0] || '고'}
             </div>
             <div className="min-w-[190px] flex-1">
               <p className="font-extrabold">{name}</p>
@@ -1325,7 +1591,7 @@ function Customers() {
             </div>
             <StatusBadge
               label={status}
-              tone={status === '확정 연결' ? 'green' : 'amber'}
+              tone={status.includes('확정') ? 'green' : 'amber'}
             />
           </div>
         ))}
@@ -1335,7 +1601,7 @@ function Customers() {
         <h2 className="section-title">자동 병합하지 않습니다</h2>
         <div className="my-5 rounded-xl bg-[#f2f6ff] p-4 text-sm leading-6 text-[#405984]">
           전화번호·차량번호·차종의 일치 근거와 충돌을 함께 보여주고, 사람이
-          승인한 병합 이력을 보존합니다.
+          승인한 병합 이력을 보존합니다. (SHA-256 해시 기반 동명이인 분리)
         </div>
         <div className="rounded-xl border border-[#e0e9e7] p-4">
           <div className="flex justify-between">
@@ -1343,9 +1609,9 @@ function Customers() {
             <Badge variant="outline">후보 87%</Badge>
           </div>
           <ul className="mt-3 space-y-2 text-xs text-[#627873]">
-            <li>✓ 전화번호 일치</li>
+            <li>✓ 전화번호 해시 일치</li>
             <li>✓ 차량번호 일치</li>
-            <li className="text-[#ad5f0e]">! 차종 표기 충돌</li>
+            <li className="text-[#ad5f0e]">! 차종 표기 충돌 (확인 필요)</li>
           </ul>
           <div className="mt-4 flex gap-2">
             <Button variant="outline" size="sm" className="flex-1">
@@ -1361,30 +1627,50 @@ function Customers() {
   );
 }
 
-function Rentals() {
-  const rows = [
-    {
-      company: 'A 렌트',
-      vehicle: '보이저 125 · 18하 2***',
-      base: 42000,
-      customer: 0,
-      billed: 42000,
-      paid: 0,
-      due: 42000,
-    },
-    {
-      company: 'B 리스',
-      vehicle: 'PCX 125 · 21허 7***',
-      base: 55000,
-      customer: 0,
-      billed: 55000,
-      paid: 55000,
-      due: 0,
-    },
-  ];
+function Rentals({ rentals }: { rentals: RentalRecord[] }) {
+  const isDbLive = rentals.length > 0;
+  const rows = isDbLive
+    ? rentals.map((r) => ({
+        id: r.id,
+        company: `${r.company} (${r.shopName})`,
+        vehicle: r.vehicle,
+        base: r.base,
+        customer: r.customer,
+        billed: r.billed,
+        paid: r.paid,
+        due: r.due,
+        status: r.status === 'settled' ? '정산 완료' : '청구 예정',
+      }))
+    : [
+        {
+          id: 'ref-1',
+          company: 'A 렌트 (참조 예시)',
+          vehicle: '보이저 125 · 18하 2***',
+          base: 42000,
+          customer: 0,
+          billed: 42000,
+          paid: 0,
+          due: 42000,
+          status: '청구 예정',
+        },
+        {
+          id: 'ref-2',
+          company: 'B 리스 (참조 예시)',
+          vehicle: 'PCX 125 · 21허 7***',
+          base: 55000,
+          customer: 0,
+          billed: 55000,
+          paid: 55000,
+          due: 0,
+          status: '정산 완료',
+        },
+      ];
   return (
     <section className="panel overflow-hidden">
-      <PanelTitle eyebrow="렌트·리스" title="0원 결제와 업체 청구를 분리" />
+      <PanelTitle
+        eyebrow={isDbLive ? 'DB 렌트 정산' : '렌트·리스'}
+        title={`0원 결제와 업체 청구를 분리 (${isDbLive ? `${rentals.length}건 DB 영구저장` : '참조 예시'})`}
+      />
       <div className="overflow-x-auto">
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-[#f6f9f8] text-left text-xs text-[#637a74]">
@@ -1406,7 +1692,7 @@ function Rentals() {
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.vehicle} className="border-t border-[#e5eeec]">
+              <tr key={row.id} className="border-t border-[#e5eeec]">
                 <td className="px-5 py-4">
                   <p className="font-bold">{row.company}</p>
                   <p className="text-xs text-[#70837e]">{row.vehicle}</p>
@@ -1423,8 +1709,8 @@ function Rentals() {
                 )}
                 <td className="px-5 py-4">
                   <StatusBadge
-                    label={row.due ? '청구 예정' : '정산 완료'}
-                    tone={row.due ? 'amber' : 'green'}
+                    label={row.status}
+                    tone={row.status.includes('예정') ? 'amber' : 'green'}
                   />
                 </td>
               </tr>
@@ -1436,38 +1722,67 @@ function Rentals() {
   );
 }
 
-function Analytics({ approvedRevenue }: { approvedRevenue: number }) {
-  const max = Math.max(...baselineReference.shops.map((shop) => shop.revenue));
+function Analytics({
+  approvedRevenue,
+  orders,
+  stats,
+}: {
+  approvedRevenue: number;
+  orders: OrderRecord[];
+  stats: DashboardStats | null;
+}) {
+  const currentRevenue = stats ? stats.totalRevenue : approvedRevenue;
+  const currentOrders = stats ? stats.totalOrders : orders.length;
+  const rentalDue = stats ? stats.rentalOutstanding : 0;
+  const liveShops = stats?.shops && stats.shops.length > 0
+    ? stats.shops.map((s) => ({
+        name: s.name,
+        orders: s.orderCount,
+        revenue: s.revenue,
+      }))
+    : baselineReference.shops;
+  const max = Math.max(...liveShops.map((shop) => shop.revenue), 1);
+  const totalShopRev = liveShops.reduce((sum, s) => sum + s.revenue, 0) || 1;
+
   return (
     <div className="space-y-6">
-      <section className="grid gap-4 md:grid-cols-3">
+      <section className="grid gap-4 md:grid-cols-4">
         <Metric
           label="승인 반영 매출"
-          value={won.format(approvedRevenue)}
-          note="이번 세션 승인분"
+          value={won.format(currentRevenue)}
+          note={`실제 DB 승인 ${currentOrders}건 집계`}
           icon={BadgeCheck}
           tone="green"
         />
         <Metric
+          label="렌트·리스 미수금"
+          value={won.format(rentalDue)}
+          note="정산 청구 대기액"
+          icon={WalletCards}
+          tone="blue"
+        />
+        <Metric
           label="참조 기준 매출"
           value={won.format(baselineReference.revenue)}
-          note="원본 엑셀 재검증 필요"
+          note="과거 엑셀 기준값"
           icon={Database}
           tone="amber"
         />
         <Metric
           label="검증 상태"
-          value="대기"
-          note="원본 파일 미수신"
+          value={orders.length > 0 ? "DB 연동" : "대기"}
+          note={orders.length > 0 ? "실시간 영구 DB 동기화 중" : "원본 파일 미수신"}
           icon={AlertTriangle}
           tone="purple"
         />
       </section>
       <section className="panel p-5 sm:p-7">
-        <p className="eyebrow">지점 비교</p>
-        <h2 className="section-title mb-7">사용자 제공 기준값</h2>
+        <p className="eyebrow">지점별 현황</p>
+        <h2 className="section-title mb-7">
+          {stats?.shops && stats.shops.length > 0 ? '실시간 DB 지점별 매출 현황' : '사용자 제공 기준값'}
+        </h2>
         <div className="space-y-7">
-          {baselineReference.shops.map((shop) => (
+          {liveShops.map((shop) => (
             <div key={shop.name}>
               <div className="mb-2 flex items-end justify-between">
                 <div>
@@ -1480,18 +1795,17 @@ function Analytics({ approvedRevenue }: { approvedRevenue: number }) {
                 <div
                   className="flex h-full items-center justify-end rounded-lg bg-gradient-to-r from-[#25b89b] to-[#0b6f5e] px-3 text-xs font-bold text-white"
                   style={{
-                    width: `${Math.round((shop.revenue / max) * 100)}%`,
+                    width: `${Math.max(Math.round((shop.revenue / max) * 100), shop.revenue > 0 ? 8 : 0)}%`,
                   }}
                 >
-                  {Math.round((shop.revenue / baselineReference.revenue) * 100)}
-                  %
+                  {Math.round((shop.revenue / totalShopRev) * 100)}%
                 </div>
               </div>
             </div>
           ))}
         </div>
         <p className="mt-7 text-xs text-[#768985]">
-          확정 분석이 아니라 원본 엑셀 대조를 위한 기준값입니다.
+          지점별 데이터는 서버 권한 격리에 따라 인가된 지점의 승인 데이터만 정확하게 분리 집계됩니다.
         </p>
       </section>
     </div>
@@ -1550,9 +1864,11 @@ function Standards() {
 
 function ExcelView({
   documents,
+  orders,
   setNotice,
 }: {
   documents: ReviewDocument[];
+  orders: OrderRecord[];
   setNotice: (value: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1566,15 +1882,52 @@ function ExcelView({
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const { inspectLegacyWorkbook } = await import('@/lib/excel');
-      setResult(inspectLegacyWorkbook(await file.arrayBuffer()));
-      setNotice(
-        `${file.name} 구조 검사를 완료했습니다. 가져오기는 아직 실행하지 않았습니다.`,
-      );
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch('/api/excel', {
+        method: 'POST',
+        body: form,
+      });
+      if (res.ok) {
+        const payload = (await res.json()) as {
+          structure: {
+            sheetNames: string[];
+            missingSheets: string[];
+            orderCount: number;
+            revenue: number;
+          };
+        };
+        setResult(payload.structure);
+        setNotice(
+          `${file.name} 서버 구조 검사를 완료했습니다 (${payload.structure.sheetNames.length}개 시트 검증, ${payload.structure.orderCount}건).`,
+        );
+      } else {
+        const { inspectLegacyWorkbook } = await import('@/lib/excel');
+        setResult(inspectLegacyWorkbook(await file.arrayBuffer()));
+        setNotice(
+          `${file.name} 구조 검사를 완료했습니다. 가져오기는 아직 실행하지 않았습니다.`,
+        );
+      }
     } catch {
       setNotice('엑셀을 읽지 못했습니다. 파일 형식과 암호 설정을 확인하세요.');
     }
   };
+
+  const handleExport = async () => {
+    try {
+      const link = document.createElement('a');
+      link.href = '/api/excel';
+      link.download = `motoworks_export_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setNotice('DB 승인 데이터 5개 시트(정비내역, 정비항목, 고객목록, 렌트리스, 기준정보) 엑셀 내보내기를 완료했습니다.');
+    } catch {
+      const { downloadLegacyWorkbook } = await import('@/lib/excel');
+      downloadLegacyWorkbook(documents);
+    }
+  };
+
   return (
     <div className="grid gap-6 xl:grid-cols-2">
       <section className="panel p-5 sm:p-7">
@@ -1597,7 +1950,7 @@ function ExcelView({
           className="mt-6 w-full rounded-xl bg-[#0d6d5d]"
           onClick={() => inputRef.current?.click()}
         >
-          <CloudUpload size={17} /> 엑셀 선택
+          <CloudUpload size={17} /> 엑셀 선택 및 서버 검사
         </Button>
         {result && (
           <div className="mt-5 rounded-xl border border-[#d9e6e3] bg-[#f8fbfa] p-4">
@@ -1609,7 +1962,7 @@ function ExcelView({
               value={
                 result.missingSheets.length
                   ? result.missingSheets.join(', ')
-                  : '없음'
+                  : '없음 (5개 표준 시트 완전 일치)'
               }
             />
           </div>
@@ -1621,90 +1974,353 @@ function ExcelView({
         </div>
         <h2 className="mt-5 text-xl font-extrabold">기존 형식으로 내보내기</h2>
         <p className="mt-2 text-sm leading-6 text-[#657a75]">
-          검수 승인된 데이터만 5개 시트로 출력합니다.
+          검수 승인된 영구 DB 데이터만 5개 시트로 완전 호환 출력합니다.
         </p>
         <div className="my-5 rounded-xl bg-[#f5f7ff] p-4">
           <InfoRow
-            label="승인 데이터"
-            value={`${documents.filter((i) => i.status === 'approved').length}건`}
+            label="DB 승인 데이터"
+            value={`${orders.length > 0 ? orders.length : documents.filter((i) => i.status === 'approved').length}건`}
           />
-          <InfoRow label="시트" value="정비내역 외 4개" />
-          <InfoRow label="파일" value="새 파일로 저장" />
+          <InfoRow label="시트 구성" value="정비내역, 정비항목, 고객목록, 렌트리스, 기준정보" />
+          <InfoRow label="파일 형식" value="새 XLSX 파일 다운로드" />
         </div>
         <Button
           variant="outline"
-          className="w-full rounded-xl border-[#687bd0] text-[#4055ae]"
-          onClick={async () => {
-            const { downloadLegacyWorkbook } = await import('@/lib/excel');
-            downloadLegacyWorkbook(documents);
-          }}
+          className="w-full rounded-xl border-[#687bd0] text-[#4055ae] hover:bg-[#687bd0]/10"
+          onClick={handleExport}
         >
-          <FileDown size={17} /> 승인 데이터 내보내기
+          <FileDown size={17} /> 승인 데이터 5개 시트 내보내기
         </Button>
       </section>
     </div>
   );
 }
 
-function UsersView() {
+function UsersView({
+  users,
+  roles,
+  onRefresh,
+}: {
+  users: UserRecord[];
+  roles: RoleRecord[];
+  onRefresh?: () => void;
+}) {
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [newRoleName, setNewRoleName] = useState('');
+  const [newRoleDesc, setNewRoleDesc] = useState('');
+  const [selectedPerms, setSelectedPerms] = useState<string[]>([
+    'view',
+    'upload',
+    'edit_extraction',
+    'review_decide',
+  ]);
+  const [creating, setCreating] = useState(false);
+  const [actionNotice, setActionNotice] = useState('');
+
+  const allAvailablePerms = [
+    { key: 'view', label: '기본 조회' },
+    { key: 'upload', label: '사진 업로드' },
+    { key: 'edit_extraction', label: '판독값 수정' },
+    { key: 'review_decide', label: '검수 승인/반려' },
+    { key: 'settlement_manage', label: '정산 관리' },
+    { key: 'excel_import', label: '엑셀 가져오기' },
+    { key: 'excel_export', label: '엑셀 내보내기' },
+    { key: 'view_pii', label: '개인정보 열람' },
+    { key: 'manage_users', label: '사용자·권한 관리' },
+    { key: 'view_audit', label: '감사로그 열람' },
+  ];
+
+  const handleUpdateStatus = async (userId: string, nextStatus: string) => {
+    setUpdatingId(userId);
+    setActionNotice('');
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_user_status',
+          userId,
+          status: nextStatus,
+        }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || '상태 변경에 실패했습니다.');
+      setActionNotice(`사용자 상태를 '${nextStatus === 'active' ? '승인(활성)' : nextStatus}'(으)로 변경했습니다.`);
+      onRefresh?.();
+    } catch (err) {
+      setActionNotice(err instanceof Error ? err.message : '오류가 발생했습니다.');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleCreateRole = async (e: React.SyntheticEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!newRoleName.trim()) return;
+    setCreating(true);
+    setActionNotice('');
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create_role',
+          name: newRoleName.trim(),
+          description: newRoleDesc.trim() || null,
+          permissions: selectedPerms,
+        }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || '역할 생성에 실패했습니다.');
+      setActionNotice(`새 권한 그룹 '${newRoleName}'이 생성되었습니다.`);
+      setNewRoleName('');
+      setNewRoleDesc('');
+      onRefresh?.();
+    } catch (err) {
+      setActionNotice(err instanceof Error ? err.message : '역할 생성 실패');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const displayUsers = users.length > 0 ? users : [
+    {
+      id: 'default-owner',
+      email: 'shortsbogo@gmail.com',
+      displayName: '김 관리자 (기본 관리자)',
+      status: 'active',
+      createdAt: 1725600000000,
+      assignments: [
+        {
+          id: 'asgn-1',
+          shopId: null,
+          shopName: '전체 지점',
+          role: 'owner',
+          roleId: null,
+          roleName: '소유자 / 최고 관리자',
+        },
+      ],
+    },
+  ];
+
   return (
-    <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
-      <section className="panel overflow-hidden">
-        <PanelTitle eyebrow="사용자" title="역할별 접근 범위" />
-        {[
-          ['김 관리자', 'admin@example.com', '조직 관리자', '전체 지점'],
-          ['박 점장', 'manager@example.com', '지점 관리자', '진바이크 용전점'],
-          ['이 직원', 'staff@example.com', '직원', '코아바이크 자양점'],
-          ['최 회계', 'viewer@example.com', '열람자', '전체 지점'],
-        ].map(([name, email, role, shop]) => (
-          <div
-            key={email}
-            className="flex flex-wrap items-center gap-4 border-t border-[#e5eeec] p-5"
-          >
-            <div className="grid h-10 w-10 place-items-center rounded-full bg-[#e1f5f0] font-black text-[#0c705e]">
-              {name[0]}
+    <div className="space-y-6">
+      {actionNotice && (
+        <div className="rounded-xl border border-[#9bdfd0] bg-[#e4faf4] px-4 py-3 text-sm font-semibold text-[#0b5c4f]">
+          {actionNotice}
+        </div>
+      )}
+      <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
+        <section className="panel overflow-hidden">
+          <PanelTitle eyebrow="사용자 계정" title={`등록 사용자 및 지점 권한 (${displayUsers.length}명)`} />
+          {displayUsers.map((user) => (
+            <div
+              key={user.id}
+              className="flex flex-wrap items-center gap-4 border-t border-[#e5eeec] p-5"
+            >
+              <div className="grid h-10 w-10 place-items-center rounded-full bg-[#e1f5f0] font-black text-[#0c705e]">
+                {user.displayName[0] || '사'}
+              </div>
+              <div className="min-w-[180px] flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="font-bold">{user.displayName}</p>
+                  <Badge
+                    variant={user.status === 'active' ? 'default' : user.status === 'pending' ? 'outline' : 'secondary'}
+                    className={user.status === 'active' ? 'bg-[#0d6d5d]' : user.status === 'pending' ? 'border-[#e69824] text-[#b06a00]' : ''}
+                  >
+                    {user.status === 'active' ? '승인 완료' : user.status === 'pending' ? '승인 대기' : '정지'}
+                  </Badge>
+                </div>
+                <p className="text-xs text-[#758782]">{user.email}</p>
+                {user.assignments.map((asgn) => (
+                  <p key={asgn.id} className="mt-1 text-xs text-[#0e7462]">
+                    • {asgn.shopName} · {asgn.roleName || asgn.role}
+                  </p>
+                ))}
+              </div>
+              {user.status === 'pending' && (
+                <Button
+                  size="sm"
+                  className="rounded-lg bg-[#0d6d5d] text-xs font-bold text-white hover:bg-[#09594c]"
+                  disabled={updatingId === user.id}
+                  onClick={() => handleUpdateStatus(user.id, 'active')}
+                >
+                  {updatingId === user.id ? '처리 중...' : '승인 및 활성화'}
+                </Button>
+              )}
             </div>
-            <div className="min-w-[180px] flex-1">
-              <p className="font-bold">{name}</p>
-              <p className="text-xs text-[#758782]">{email}</p>
-            </div>
-            <Badge variant="outline">{role}</Badge>
-            <span className="min-w-[140px] text-sm">{shop}</span>
+          ))}
+        </section>
+        <aside className="panel p-5">
+          <p className="eyebrow">개인정보 및 보안 원칙</p>
+          <h2 className="section-title">RBAC 엄격 격리</h2>
+          <ul className="mt-5 space-y-3 text-sm leading-6 text-[#5e746e]">
+            <li>• <strong>초기 소유자:</strong> shortsbogo@gmail.com 만 최고 권한 보유</li>
+            <li>• <strong>신규 가입자:</strong> 승인 대기(pending) 상태로 시작</li>
+            <li>• <strong>지점 격리:</strong> 자양센터 / 용전센터 상호 데이터 엄격 분리</li>
+            <li>• <strong>개인정보 암호화:</strong> AES-GCM 256비트 암호화 및 SHA-256 해시 검색</li>
+            <li>• <strong>전수 감사:</strong> 승인·수정·상태변경 전 과정 영구 로그</li>
+          </ul>
+        </aside>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <section className="panel p-5 sm:p-6">
+          <p className="eyebrow">권한 그룹</p>
+          <h2 className="section-title mb-4">커스텀 역할 목록 ({roles.length}개)</h2>
+          <div className="space-y-3">
+            {roles.length > 0 ? (
+              roles.map((role) => (
+                <div key={role.id} className="rounded-xl border border-[#e2ece9] bg-[#fbfdfc] p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="font-bold text-[#0c3a33]">{role.name}</p>
+                    <span className="text-xs text-[#6e8580]">{role.description || '설명 없음'}</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {role.permissions.map((perm) => (
+                      <span key={perm} className="rounded-md bg-[#e4f7f2] px-2 py-0.5 text-[11px] font-semibold text-[#096654]">
+                        {perm}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-[#738a84]">생성된 커스텀 역할이 없습니다. 우측 폼에서 추가할 수 있습니다.</p>
+            )}
           </div>
-        ))}
-      </section>
-      <aside className="panel p-5">
-        <p className="eyebrow">개인정보</p>
-        <h2 className="section-title">권한 원칙</h2>
-        <ul className="mt-5 space-y-3 text-sm leading-6 text-[#5e746e]">
-          <li>• 조회·수정·내보내기 권한 분리</li>
-          <li>• 조직과 지점 범위를 서버에서 검증</li>
-          <li>• 개인정보 열람 기록 저장</li>
-          <li>• 승인·병합·해제 이력 보존</li>
-        </ul>
-      </aside>
+        </section>
+
+        <section className="panel p-5 sm:p-6">
+          <p className="eyebrow">역할 생성</p>
+          <h2 className="section-title mb-4">새 커스텀 권한 그룹 정의</h2>
+          <form onSubmit={handleCreateRole} className="space-y-4">
+            <div>
+              <label htmlFor="role-name-input" className="text-xs font-bold text-[#445b56]">역할 이름</label>
+              <Input
+                id="role-name-input"
+                value={newRoleName}
+                onChange={(e) => setNewRoleName(e.target.value)}
+                placeholder="예: 야간 정비반장"
+                className="mt-1 h-10 rounded-xl bg-white"
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="role-desc-input" className="text-xs font-bold text-[#445b56]">설명 (선택)</label>
+              <Input
+                id="role-desc-input"
+                value={newRoleDesc}
+                onChange={(e) => setNewRoleDesc(e.target.value)}
+                placeholder="예: 정비 접수 및 판독값 수정 권한만 부여"
+                className="mt-1 h-10 rounded-xl bg-white"
+              />
+            </div>
+            <div>
+              <span className="text-xs font-bold text-[#445b56]">허용 권한 선택 (세부 10종)</span>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {allAvailablePerms.map((p) => {
+                  const checked = selectedPerms.includes(p.key);
+                  return (
+                    <label key={p.key} className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedPerms([...selectedPerms, p.key]);
+                          else setSelectedPerms(selectedPerms.filter((k) => k !== p.key));
+                        }}
+                        className="rounded border-[#a1cac1]"
+                      />
+                      <span>{p.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+            <Button
+              type="submit"
+              disabled={creating || !newRoleName.trim()}
+              className="w-full rounded-xl bg-[#0d6d5d] text-white"
+            >
+              {creating ? '역할 등록 중...' : '새 권한 그룹 생성'}
+            </Button>
+          </form>
+        </section>
+      </div>
     </div>
   );
 }
-function Audit({ documents }: { documents: ReviewDocument[] }) {
-  const changed = documents.filter(
+
+function Audit({
+  documents,
+  auditLogs,
+}: {
+  documents: ReviewDocument[];
+  auditLogs: AuditLogRecord[];
+}) {
+  const isDbLive = auditLogs.length > 0;
+  const changedDocs = documents.filter(
     (d) =>
       d.status !== 'pending' ||
       d.fields.some((f) => f.correctedValue !== undefined),
   );
+
   return (
     <section className="panel overflow-hidden">
-      <PanelTitle eyebrow="감사 로그" title="변경된 값과 승인 근거" />
-      {changed.length ? (
+      <PanelTitle
+        eyebrow={isDbLive ? 'DB 영구 감사 이력' : '세션 변경 로그'}
+        title={`수정·승인 및 권한 변경 근거 (${isDbLive ? `${auditLogs.length}건 DB 영구 보존됨` : `${changedDocs.length}건`})`}
+      />
+      {isDbLive ? (
+        <div className="divide-y divide-[#e5eeec]">
+          {auditLogs.map((log) => (
+            <div
+              key={log.id}
+              className="grid gap-3 p-5 sm:grid-cols-[200px_1fr_auto]"
+            >
+              <div>
+                <p className="font-mono text-xs font-bold text-[#0c3a33]">{log.id.slice(0, 16)}...</p>
+                <p className="text-xs text-[#758782]">
+                  {new Date(log.createdAt).toLocaleString('ko-KR')}
+                </p>
+                <p className="text-xs font-semibold text-[#0f6c5b]">{log.shopName}</p>
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-bold text-[#102522]">{log.action}</p>
+                  <span className="rounded bg-[#f0f4f3] px-2 py-0.5 text-[11px] font-mono text-[#5b736e]">
+                    {log.entityType} #{log.entityId.slice(0, 8)}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-[#657a75]">
+                  수행자: <strong>{log.actorName}</strong>
+                </p>
+                {Boolean(log.detail) && (
+                  <pre className="mt-2 max-h-24 overflow-auto rounded-lg bg-[#f6f9f8] p-2 text-[11px] text-[#425d57] font-mono">
+                    {typeof log.detail === 'string' ? log.detail : JSON.stringify(log.detail, null, 2)}
+                  </pre>
+                )}
+              </div>
+              <div>
+                <StatusBadge
+                  label={log.action.includes('approve') ? '승인' : log.action.includes('status') ? '권한변경' : '수정/작업'}
+                  tone={log.action.includes('approve') ? 'green' : 'amber'}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : changedDocs.length ? (
         <div>
-          {changed.map((d) => (
+          {changedDocs.map((d) => (
             <div
               key={d.id}
               className="grid gap-3 border-t border-[#e5eeec] p-5 sm:grid-cols-[180px_1fr_auto]"
             >
               <div>
                 <p className="font-mono text-xs font-bold">{d.id}</p>
-                <p className="text-xs text-[#758782]">방금 전</p>
+                <p className="text-xs text-[#758782]">세션 기록</p>
               </div>
               <div>
                 <p className="text-sm font-bold">
@@ -1715,7 +2331,7 @@ function Audit({ documents }: { documents: ReviewDocument[] }) {
                       : '필드 수정'}
                 </p>
                 <p className="text-xs text-[#657a75]">
-                  원본값과 최종값을 분리 저장 · 로컬 데모 사용자
+                  원본값과 최종값을 분리 보존 · {d.shopName}
                 </p>
               </div>
               <StatusBadge
@@ -1734,7 +2350,7 @@ function Audit({ documents }: { documents: ReviewDocument[] }) {
       ) : (
         <EmptyState
           title="아직 변경 이력이 없습니다"
-          text="검수 화면에서 값을 수정하거나 승인하면 여기에 기록됩니다."
+          text="검수 화면에서 값을 수정하거나 승인하면 DB 감사 로그 테이블에 영구 보존됩니다."
         />
       )}
     </section>
