@@ -1,0 +1,9 @@
+{
+  "name": "모토웍스 AI 정비 운영 시스템",
+  "short_name": "모토웍스 AI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f7f6",
+  "theme_color": "#082925",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
