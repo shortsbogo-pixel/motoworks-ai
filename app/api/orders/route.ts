@@ -4,6 +4,9 @@ import {
   errorResponse,
   getAllowedShops,
   hasPermission,
+  maskName,
+  maskPhone,
+  maskPlate,
   ORGANIZATION_ID,
   requirePermission,
   SHOP_NAMES,
@@ -67,6 +70,9 @@ export async function GET(request: Request) {
     const orders = await Promise.all(
       rows.results.map(async (row) => {
         let customerName = row.customer_name || '고객 미확인';
+        if (row.customer_name && row.customer_name.startsWith('v1:') && runtime.DATA_ENCRYPTION_KEY) {
+          customerName = await decryptValue(row.customer_name, runtime.DATA_ENCRYPTION_KEY);
+        }
         let phone = '';
         let plate = '';
 
@@ -84,17 +90,9 @@ export async function GET(request: Request) {
         }
 
         if (!canViewPii) {
-          if (customerName.length > 2) {
-            customerName = `${customerName[0]}*${customerName.slice(2)}`;
-          } else if (customerName.length === 2) {
-            customerName = `${customerName[0]}*`;
-          }
-          if (phone) {
-            phone = phone.replace(/(\d{3})[- ]?(\d{3,4})[- ]?(\d{4})/, '$1-****-$3');
-          }
-          if (plate) {
-            plate = plate.replace(/(\d{2,3}[가-힣]\s*)(\d{4})/, '$1****');
-          }
+          customerName = maskName(customerName);
+          phone = maskPhone(phone);
+          plate = maskPlate(plate);
         }
 
         // 해당 정비의 작업 항목 및 결제 내역 조회

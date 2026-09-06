@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, createContext, useContext, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import {
   Activity,
@@ -47,6 +47,26 @@ import {
   recentOrders,
 } from '@/lib/mock-data';
 import { shouldHighlightField, type ReviewDocument } from '@/lib/domain';
+
+export type DesignTheme = 'cockpit' | 'enterprise' | 'industrial';
+
+interface DesignThemeContextType {
+  theme: DesignTheme;
+  isCockpit: boolean;
+  isEnterprise: boolean;
+  isIndustrial: boolean;
+  setTheme: (theme: DesignTheme) => void;
+}
+
+const DesignThemeContext = createContext<DesignThemeContextType>({
+  theme: 'industrial',
+  isCockpit: false,
+  isEnterprise: false,
+  isIndustrial: true,
+  setTheme: () => {},
+});
+
+export const useDesignTheme = () => useContext(DesignThemeContext);
 
 type View =
   | 'dashboard'
@@ -280,6 +300,10 @@ export function AppShell({ userName }: { userName: string }) {
     useState<ProcessingSummary | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notice, setNotice] = useState('');
+  const [designTheme, setDesignTheme] = useState<DesignTheme>('industrial');
+  const isCockpit = designTheme === 'cockpit';
+  const isEnterprise = designTheme === 'enterprise';
+  const isIndustrial = designTheme === 'industrial';
 
   const pending = documents.filter(
     (document) => document.status === 'pending',
@@ -330,7 +354,7 @@ export function AppShell({ userName }: { userName: string }) {
         if (payload?.customers) setCustomers(payload.customers);
       }
 
-      // 5. 렌트 정산
+      // 5. 렌트/리스 정산
       const rentRes = await fetch('/api/rentals', { cache: 'no-store' });
       if (rentRes.ok) {
         const payload = (await rentRes.json()) as { rentals?: RentalRecord[] };
@@ -364,108 +388,298 @@ export function AppShell({ userName }: { userName: string }) {
 
 
   return (
-    <div className="min-h-screen bg-[#f3f7f6] text-[#102522]">
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 w-[264px] border-r border-white/10 bg-[#082925] text-white transition-transform lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
-      >
-        <div className="flex h-20 items-center gap-3 border-b border-white/10 px-6">
-          <div className="grid h-10 w-10 place-items-center rounded-xl bg-[#22c7a5] text-[#06241f] shadow-[0_8px_24px_rgba(34,199,165,.22)]">
-            <Bike size={23} strokeWidth={2.4} />
-          </div>
-          <div>
-            <p className="text-[17px] font-extrabold tracking-[-0.03em]">
-              모토웍스 AI
-            </p>
-            <p className="text-xs text-[#83bdb2]">정비 운영 시스템</p>
-          </div>
-        </div>
-        <nav className="flex h-[calc(100%-160px)] flex-col gap-6 overflow-y-auto px-3 py-5">
-          {navGroups.map((group) => (
-            <div key={group.label}>
-              <p className="mb-2 px-3 text-[11px] font-bold uppercase tracking-[.14em] text-[#65978e]">
-                {group.label}
+    <DesignThemeContext.Provider
+      value={{
+        theme: designTheme,
+        isCockpit,
+        isEnterprise,
+        isIndustrial,
+        setTheme: setDesignTheme,
+      }}
+    >
+      <div className={`min-h-screen transition-colors duration-200 theme-${designTheme} ${
+        isEnterprise
+          ? 'bg-[#f8fafc] text-slate-900'
+          : isIndustrial
+            ? 'bg-[#edf0f5] text-slate-950'
+            : 'bg-[#0b0f17] text-slate-100'
+      }`}>
+        <aside
+          className={`fixed inset-y-0 left-0 z-40 w-[264px] border-r transition-all lg:translate-x-0 ${
+            sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          } ${
+            isEnterprise
+              ? 'border-slate-200 bg-white text-slate-800 shadow-sm'
+              : isIndustrial
+                ? 'border-slate-800 bg-[#161d28] text-slate-100 shadow-xl'
+                : 'border-slate-800/80 bg-[#090d16] text-slate-100'
+          }`}
+        >
+          <div className={`flex h-20 items-center gap-3 border-b px-6 ${
+            isEnterprise
+              ? 'border-slate-100'
+              : isIndustrial
+                ? 'border-slate-800/90'
+                : 'border-slate-800/80'
+          }`}>
+            <div className={`grid h-10 w-10 place-items-center rounded-xl font-black transition ${
+              isEnterprise
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                : isIndustrial
+                  ? 'bg-amber-500 text-slate-950 shadow-[0_0_20px_rgba(245,158,11,0.4)]'
+                  : 'bg-emerald-500 text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.35)]'
+            }`}>
+              <Bike size={23} strokeWidth={2.4} />
+            </div>
+            <div>
+              <p className={`text-[17px] font-extrabold tracking-[-0.03em] ${
+                isEnterprise ? 'text-slate-900' : 'text-slate-100'
+              }`}>
+                모토웍스 AI
               </p>
-              <div className="space-y-1">
-                {group.items.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => navigate(item.id)}
-                      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition ${view === item.id ? 'bg-[#16463f] text-white shadow-inner' : 'text-[#b9d3ce] hover:bg-white/5 hover:text-white'}`}
-                    >
-                      <Icon size={18} />
-                      <span className="flex-1">{item.label}</span>
-                      {item.id === 'review' && pending > 0 && (
-                        <span className="grid min-w-6 place-items-center rounded-full bg-[#ffb54c] px-1.5 py-0.5 text-[11px] font-extrabold text-[#3e2500]">
-                          {pending}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
+              <p className={`text-xs font-mono tracking-wide ${
+                isEnterprise
+                  ? 'text-blue-600 font-bold'
+                  : isIndustrial
+                    ? 'text-amber-400 font-bold'
+                    : 'text-emerald-400/90'
+              }`}>
+                {isEnterprise ? '2. ENTERPRISE PRO' : isIndustrial ? '3. WORKSHOP MES' : '1. PRECISION COCKPIT'}
+              </p>
+            </div>
+          </div>
+          <nav className="flex h-[calc(100%-160px)] flex-col gap-6 overflow-y-auto px-3 py-5">
+            {navGroups.map((group) => (
+              <div key={group.label}>
+                <p className={`mb-2 px-3 text-[10px] font-bold uppercase tracking-[.18em] ${
+                  isEnterprise ? 'text-slate-400 font-semibold' : 'text-slate-500'
+                }`}>
+                  {group.label}
+                </p>
+                <div className="space-y-1">
+                  {group.items.map((item) => {
+                    const Icon = item.icon;
+                    const active = view === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => navigate(item.id)}
+                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition ${
+                          active
+                            ? isEnterprise
+                              ? 'bg-blue-50 text-blue-700 border border-blue-200/80 shadow-xs font-bold'
+                              : isIndustrial
+                                ? 'bg-amber-500/15 text-amber-300 border border-amber-500/40 shadow-[0_0_15px_rgba(245,158,11,0.2)] font-bold'
+                                : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.15)] font-bold'
+                            : isEnterprise
+                              ? 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                              : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+                        }`}
+                      >
+                        <Icon
+                          size={18}
+                          className={
+                            active
+                              ? isEnterprise
+                                ? 'text-blue-600'
+                                : isIndustrial
+                                  ? 'text-amber-400'
+                                  : 'text-emerald-400'
+                              : isEnterprise
+                                ? 'text-slate-400'
+                                : 'text-slate-500'
+                          }
+                        />
+                        <span className="flex-1">{item.label}</span>
+                        {item.id === 'review' && pending > 0 && (
+                          <span className={`grid min-w-6 place-items-center rounded-full px-1.5 py-0.5 text-[11px] font-mono font-black ${
+                            isEnterprise
+                              ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                              : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-[0_0_10px_rgba(245,158,11,0.25)]'
+                          }`}>
+                            {pending}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </nav>
+          <div className={`absolute inset-x-3 bottom-3 rounded-xl border p-3 ${
+            isEnterprise
+              ? 'border-slate-200 bg-slate-50/80'
+              : 'border-slate-800/80 bg-slate-900/60 backdrop-blur-sm'
+          }`}>
+            <div className="flex items-center gap-3">
+              <div className={`grid h-9 w-9 place-items-center rounded-full text-sm font-black border ${
+                isEnterprise
+                  ? 'bg-blue-100 text-blue-700 border-blue-200'
+                  : isIndustrial
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+              }`}>
+                김
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className={`truncate text-sm font-semibold ${isEnterprise ? 'text-slate-800' : 'text-slate-200'}`}>
+                  {userName}
+                </p>
+                <p className={`text-xs ${isEnterprise ? 'text-slate-400' : 'text-slate-400'}`}>
+                  조직 관리자 · 전체 지점
+                </p>
               </div>
             </div>
-          ))}
-        </nav>
-        <div className="absolute inset-x-3 bottom-3 rounded-xl border border-white/10 bg-white/5 p-3">
-          <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-full bg-[#b8f4e6] text-sm font-black text-[#0c3a33]">
-              김
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold">{userName}</p>
-              <p className="text-xs text-[#83bdb2]">조직 관리자 · 전체 지점</p>
-            </div>
           </div>
-        </div>
-      </aside>
-      {sidebarOpen && (
-        <button
-          aria-label="메뉴 닫기"
-          className="fixed inset-0 z-30 bg-black/30 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-      <main className="min-h-screen pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-0 lg:pl-[264px]">
-        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-[#dbe8e5] bg-[#f8fbfa]/94 px-3 backdrop-blur-xl sm:h-20 sm:gap-4 sm:px-7 lg:px-10">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="lg:hidden"
-            onClick={() => setSidebarOpen(true)}
-          >
-            <Menu />
-          </Button>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-lg font-extrabold tracking-[-0.025em] sm:text-2xl">
-              {titles[view].title}
-            </h1>
-            <p className="hidden text-sm text-[#57716c] sm:block">
-              {titles[view].description}
-            </p>
-          </div>
-          <div className="hidden items-center gap-2 rounded-full border border-[#cfe0dc] bg-white px-3 py-2 text-sm text-[#415d57] md:flex">
-            <Store size={15} />
-            <span>전체 지점</span>
-            <ChevronRight size={14} />
-          </div>
-          <Button
-            onClick={() => navigate('upload')}
-            className="min-h-11 rounded-xl bg-[#0d6d5d] px-3 text-white hover:bg-[#09594c] sm:px-4"
-          >
-            <CloudUpload size={17} />
-            <span className="hidden sm:inline">사진 업로드</span>
-          </Button>
-        </header>
-        {notice && (
-          <div className="mx-4 mt-4 flex items-center justify-between rounded-xl border border-[#9bdfd0] bg-[#e4faf4] px-4 py-3 text-sm font-semibold text-[#0b5c4f] sm:mx-7 lg:mx-10">
-            <span>{notice}</span>
-            <button onClick={() => setNotice('')} aria-label="알림 닫기">
-              <X size={16} />
-            </button>
-          </div>
+        </aside>
+        {sidebarOpen && (
+          <button
+            aria-label="메뉴 닫기"
+            className="fixed inset-0 z-30 bg-black/60 backdrop-blur-xs lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
         )}
+        <main className="min-h-screen pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-0 lg:pl-[264px]">
+          <header className={`sticky top-0 z-20 flex h-16 items-center gap-2 sm:gap-3 border-b px-3 backdrop-blur-xl sm:h-20 sm:gap-4 sm:px-7 lg:px-10 transition-colors ${
+            isEnterprise
+              ? 'border-slate-200 bg-white/90 shadow-xs text-slate-900'
+              : isIndustrial
+                ? 'border-slate-800 bg-[#161d28] text-slate-100 shadow-md'
+                : 'border-slate-800/80 bg-[#0b0f17]/85 text-slate-100'
+          }`}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={`lg:hidden shrink-0 ${
+                isEnterprise ? 'text-slate-700 hover:bg-slate-100' : 'text-slate-300 hover:bg-slate-800'
+              }`}
+              onClick={() => setSidebarOpen(true)}
+            >
+              <Menu />
+            </Button>
+            <div className="min-w-0 flex-1">
+              <h1 className={`truncate text-lg font-black tracking-[-0.025em] sm:text-2xl ${
+                isEnterprise ? 'text-slate-900' : 'text-slate-100'
+              }`}>
+                {view === 'review' && isIndustrial ? 'Document Review Station' : titles[view].title}
+              </h1>
+              <p className={`hidden text-sm sm:block ${
+                isEnterprise ? 'text-slate-500' : isIndustrial ? 'text-slate-400 font-medium' : 'text-slate-400'
+              }`}>
+                {view === 'review' && isIndustrial
+                  ? '모빌리티 현장 정비 및 영수증 AI 고대비 검수 스테이션'
+                  : titles[view].description}
+              </p>
+            </div>
+
+            {/* 실시간 3가지 디자인 스위처 (1. 콕핏 ↔ 2. 기업형 ↔ 3. 산업) */}
+            <div className={`flex items-center rounded-full border p-1 text-xs font-mono transition-colors ${
+              isEnterprise
+                ? 'border-slate-200 bg-slate-100'
+                : isIndustrial
+                  ? 'border-slate-700 bg-[#0f141d]'
+                  : 'border-slate-700/80 bg-slate-900/90'
+            }`}>
+              <button
+                type="button"
+                onClick={() => setDesignTheme('cockpit')}
+                className={`rounded-full px-2.5 py-1 transition font-bold ${
+                  isCockpit
+                    ? 'bg-emerald-500 text-slate-950 shadow-[0_0_12px_rgba(16,185,129,0.5)] font-black'
+                    : isEnterprise
+                      ? 'text-slate-600 hover:text-slate-900'
+                      : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                1. 콕핏
+              </button>
+              <button
+                type="button"
+                onClick={() => setDesignTheme('enterprise')}
+                className={`rounded-full px-2.5 py-1 transition font-bold ${
+                  isEnterprise
+                    ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/40 font-black'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                2. 프로
+              </button>
+              <button
+                type="button"
+                onClick={() => setDesignTheme('industrial')}
+                className={`rounded-full px-2.5 py-1 transition font-bold ${
+                  isIndustrial
+                    ? 'bg-amber-500 text-slate-950 shadow-[0_0_12px_rgba(245,158,11,0.5)] font-black'
+                    : isEnterprise
+                      ? 'text-slate-600 hover:text-slate-900'
+                      : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                3. 산업
+              </button>
+            </div>
+
+            <div className={`hidden items-center gap-2 rounded-full border px-3 py-2 text-sm md:flex ${
+              isEnterprise
+                ? 'border-slate-200 bg-slate-50 text-slate-700'
+                : isIndustrial
+                  ? 'border-slate-700 bg-[#0f141d] text-slate-300'
+                  : 'border-slate-700/80 bg-slate-900/80 text-slate-300'
+            }`}>
+              <Store
+                size={15}
+                className={
+                  isEnterprise
+                    ? 'text-blue-600'
+                    : isIndustrial
+                      ? 'text-amber-400'
+                      : 'text-emerald-400'
+                }
+              />
+              <span>전체 지점</span>
+              <ChevronRight size={14} className={isEnterprise ? 'text-slate-400' : 'text-slate-500'} />
+            </div>
+            <Button
+              onClick={() => navigate('upload')}
+              className={`min-h-11 rounded-xl font-black px-3 sm:px-4 transition ${
+                isEnterprise
+                  ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm font-bold'
+                  : isIndustrial
+                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md font-black tracking-tight'
+                    : 'bg-emerald-500 hover:bg-emerald-400 glow-emerald font-bold text-slate-950'
+              }`}
+            >
+              <CloudUpload size={17} />
+              <span className="hidden sm:inline">
+                {isIndustrial ? 'LIVE TABLET' : '사진 업로드'}
+              </span>
+            </Button>
+          </header>
+          {notice && (
+            <div className={`mx-4 mt-4 flex items-center justify-between rounded-xl border px-4 py-3 text-sm font-semibold sm:mx-7 lg:mx-10 ${
+              isEnterprise
+                ? 'border-blue-200 bg-blue-50 text-blue-800'
+                : isIndustrial
+                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-300 glow-box-amber'
+                  : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 glow-box-emerald'
+            }`}>
+              <span>{notice}</span>
+              <button
+                onClick={() => setNotice('')}
+                aria-label="알림 닫기"
+                className={
+                  isEnterprise
+                    ? 'text-blue-600 hover:text-blue-800'
+                    : isIndustrial
+                      ? 'text-amber-400 hover:text-amber-200'
+                      : 'text-emerald-400 hover:text-emerald-200'
+                }
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
         <div className="p-3 sm:p-7 lg:p-10">
           {view === 'dashboard' && (
             <Dashboard
@@ -536,7 +750,11 @@ export function AppShell({ userName }: { userName: string }) {
         </div>
         <nav
           aria-label="모바일 주요 메뉴"
-          className="safe-bottom fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-[#cfe0dc] bg-white/96 px-2 pt-1.5 shadow-[0_-8px_24px_rgba(8,41,37,.10)] backdrop-blur-xl lg:hidden"
+          className={`safe-bottom fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t px-2 pt-1.5 backdrop-blur-xl lg:hidden transition-colors ${
+            isEnterprise
+              ? 'border-slate-200 bg-white/95 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]'
+              : 'border-slate-800/90 bg-[#090d16]/95 shadow-[0_-8px_30px_rgba(0,0,0,.6)]'
+          }`}
         >
           {[
             { id: 'dashboard' as View, label: '홈', icon: LayoutDashboard },
@@ -551,12 +769,26 @@ export function AppShell({ userName }: { userName: string }) {
                 key={item.id}
                 onClick={() => navigate(item.id)}
                 aria-current={active ? 'page' : undefined}
-                className={`relative flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[12px] font-bold transition ${active ? 'bg-[#e4f7f2] text-[#096654]' : 'text-[#627873]'}`}
+                className={`relative flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[12px] font-bold transition ${
+                  active
+                    ? isEnterprise
+                      ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                      : isIndustrial
+                        ? 'bg-amber-500/15 text-amber-300 border border-amber-500/40'
+                        : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                    : isEnterprise
+                      ? 'text-slate-500 hover:text-slate-800'
+                      : 'text-slate-400 hover:text-slate-200'
+                }`}
               >
                 <Icon size={20} strokeWidth={active ? 2.5 : 2} />
                 <span>{item.label}</span>
                 {item.id === 'review' && pending > 0 && (
-                  <span className="absolute right-[22%] top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-[#f4a62a] px-1 text-[10px] font-black text-[#3b2500]">
+                  <span className={`absolute right-[22%] top-1 grid min-h-4 min-w-4 place-items-center rounded-full px-1 text-[10px] font-black font-mono ${
+                    isEnterprise
+                      ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-[0_0_8px_rgba(245,158,11,0.3)]'
+                  }`}>
                     {pending}
                   </span>
                 )}
@@ -566,6 +798,7 @@ export function AppShell({ userName }: { userName: string }) {
         </nav>
       </main>
     </div>
+    </DesignThemeContext.Provider>
   );
 }
 
@@ -584,6 +817,7 @@ function Dashboard({
   orders: OrderRecord[];
   navigate: (view: View) => void;
 }) {
+  const { isIndustrial, isEnterprise } = useDesignTheme();
   const effectivePending = stats ? stats.pendingReviewCount : pending;
   const effectiveApprovedCount = stats ? stats.totalOrders : approvedCount;
   const effectiveRevenue = stats ? stats.totalRevenue : approvedRevenue;
@@ -641,7 +875,13 @@ function Dashboard({
             </div>
             <Button
               variant="outline"
-              className="rounded-xl"
+              className={`rounded-xl transition font-bold ${
+                isEnterprise
+                  ? 'border-slate-200 text-slate-700 hover:border-blue-500 hover:text-blue-600'
+                  : isIndustrial
+                    ? 'border-2 border-slate-300 bg-white text-slate-900 hover:border-amber-500 hover:text-amber-700'
+                    : 'border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-400'
+              }`}
               onClick={() => navigate('review')}
             >
               대기함 열기 <ChevronRight size={16} />
@@ -653,57 +893,69 @@ function Dashboard({
                 '매장 미확정',
                 4,
                 '사진의 지점 표시가 없거나 흐립니다.',
-                'bg-[#fff1d6] text-[#9a5b00]',
+                'bg-amber-500/15 text-amber-400 border border-amber-500/30',
               ],
               [
                 '차종 후보',
                 4,
                 '배기량 또는 연식을 확정할 수 없습니다.',
-                'bg-[#e8edff] text-[#465fc7]',
+                'bg-sky-500/15 text-sky-400 border border-sky-500/30',
               ],
               [
                 '0원 정비',
                 2,
                 '렌트 정비 여부를 확인해야 합니다.',
-                'bg-[#ffe7e4] text-[#b54538]',
+                'bg-rose-500/15 text-rose-400 border border-rose-500/30',
               ],
               [
                 '중복 후보',
                 1,
                 '원본 해시와 작업 항목이 유사합니다.',
-                'bg-[#eee8ff] text-[#6b50ad]',
+                'bg-purple-500/15 text-purple-400 border border-purple-500/30',
               ],
             ].map(([label, count, description, tone]) => (
               <div
                 key={String(label)}
-                className="flex items-center gap-4 rounded-xl border border-[#e2ece9] bg-[#fbfdfc] p-4"
+                className={`flex items-center gap-4 rounded-xl border p-4 transition ${
+                  isEnterprise
+                    ? 'border-slate-200 bg-white text-slate-900 hover:bg-slate-50'
+                    : isIndustrial
+                      ? 'border-2 border-slate-200 bg-white text-slate-950 hover:bg-slate-50 shadow-xs'
+                      : 'border-slate-800/90 bg-slate-900/60 text-slate-100 hover:border-slate-700 hover:bg-slate-900'
+                }`}
               >
                 <span
-                  className={`grid h-10 w-10 place-items-center rounded-xl text-sm font-black ${tone}`}
+                  className={`grid h-10 w-10 place-items-center rounded-xl text-sm font-black font-mono ${tone}`}
                 >
                   {count}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="font-bold">{label}</p>
-                  <p className="text-sm text-[#667d78]">{description}</p>
+                  <p className={`font-bold ${isEnterprise || isIndustrial ? 'text-slate-900' : 'text-slate-100'}`}>{label}</p>
+                  <p className={`text-sm ${isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-400'}`}>{description}</p>
                 </div>
-                <ChevronRight size={17} className="text-[#89a09b]" />
+                <ChevronRight size={17} className={isEnterprise || isIndustrial ? 'text-slate-400' : 'text-slate-600'} />
               </div>
             ))}
           </div>
         </section>
         <section className="panel overflow-hidden">
-          <div className="border-b border-[#e2ece9] p-5 sm:p-6">
+          <div className={`border-b p-5 sm:p-6 ${
+            isEnterprise || isIndustrial ? 'border-slate-200' : 'border-slate-800'
+          }`}>
             <p className="eyebrow">기존 데이터</p>
             <h2 className="section-title">재검증 대기</h2>
           </div>
           <div className="p-5 sm:p-6">
-            <div className="mb-5 flex items-start gap-3 rounded-xl border border-[#f2d39e] bg-[#fff8e9] p-4">
+            <div className={`mb-5 flex items-start gap-3 rounded-xl border p-4 ${
+              isEnterprise || isIndustrial
+                ? 'border-amber-300 bg-amber-50 text-amber-900'
+                : 'border-amber-500/30 bg-amber-500/10 text-amber-200/90'
+            }`}>
               <AlertTriangle
-                className="mt-0.5 shrink-0 text-[#c17b0e]"
+                className={`mt-0.5 shrink-0 ${isEnterprise || isIndustrial ? 'text-amber-600' : 'text-amber-400'}`}
                 size={19}
               />
-              <p className="text-sm leading-6 text-[#76521a]">
+              <p className="text-sm leading-6">
                 원본 엑셀이 전달되지 않아 아래 값은 사용자 제공 기준값입니다.
                 매출로 확정하지 않았습니다.
               </p>
@@ -725,7 +977,13 @@ function Dashboard({
             </dl>
             <Button
               variant="outline"
-              className="mt-6 w-full rounded-xl"
+              className={`mt-6 w-full rounded-xl transition ${
+                isEnterprise
+                  ? 'border-slate-200 text-slate-700 hover:border-blue-500 hover:text-blue-600'
+                  : isIndustrial
+                    ? 'border-2 border-slate-300 bg-white text-slate-900 font-bold hover:border-amber-500 hover:text-amber-700'
+                    : 'border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-400'
+              }`}
               onClick={() => navigate('excel')}
             >
               <FileSpreadsheet size={16} /> 원본 엑셀 연결
@@ -734,14 +992,26 @@ function Dashboard({
         </section>
       </div>
       <section className="panel overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[#e2ece9] p-5 sm:p-6">
+        <div className={`flex items-center justify-between border-b p-5 sm:p-6 ${
+          isEnterprise || isIndustrial ? 'border-slate-200' : 'border-slate-800'
+        }`}>
           <div>
             <p className="eyebrow">최근 기록</p>
             <h2 className="section-title">
               승인된 정비 {orders.length > 0 ? `(${orders.length}건 DB 영구저장됨)` : '(참조 예시)'}
             </h2>
           </div>
-          <Button variant="ghost" onClick={() => navigate('orders')}>
+          <Button
+            variant="ghost"
+            className={`font-bold ${
+              isEnterprise
+                ? 'text-blue-600 hover:text-blue-700 hover:bg-blue-50'
+                : isIndustrial
+                  ? 'text-amber-700 hover:text-amber-800 hover:bg-amber-50'
+                  : 'text-slate-400 hover:text-emerald-400 hover:bg-slate-800'
+            }`}
+            onClick={() => navigate('orders')}
+          >
             전체 보기 <ChevronRight size={16} />
           </Button>
         </div>
@@ -766,16 +1036,39 @@ function Metric({
   tone: string;
   onClick?: () => void;
 }) {
+  const { isIndustrial, isEnterprise } = useDesignTheme();
   const tones: Record<string, string> = {
-    amber: 'bg-[#fff0d5] text-[#b06a00]',
-    green: 'bg-[#dcf8ed] text-[#08745f]',
-    blue: 'bg-[#e4f2ff] text-[#246b9a]',
-    purple: 'bg-[#eee9ff] text-[#6b52ad]',
+    amber: isEnterprise
+      ? 'bg-amber-50 text-amber-800 border border-amber-300'
+      : isIndustrial
+        ? 'bg-amber-500/20 text-amber-800 border-2 border-amber-500/50'
+        : 'bg-amber-500/15 text-amber-400 border border-amber-500/30 glow-box-amber',
+    green: isEnterprise
+      ? 'bg-emerald-50 text-emerald-800 border border-emerald-300'
+      : isIndustrial
+        ? 'bg-emerald-500/20 text-emerald-800 border-2 border-emerald-500/50'
+        : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 glow-box-emerald',
+    blue: isEnterprise
+      ? 'bg-blue-50 text-blue-800 border border-blue-300'
+      : isIndustrial
+        ? 'bg-sky-500/20 text-sky-800 border-2 border-sky-500/50'
+        : 'bg-sky-500/15 text-sky-400 border border-sky-500/30',
+    purple: isEnterprise
+      ? 'bg-purple-50 text-purple-800 border border-purple-300'
+      : isIndustrial
+        ? 'bg-purple-500/20 text-purple-800 border-2 border-purple-500/50'
+        : 'bg-purple-500/15 text-purple-400 border border-purple-500/30',
   };
   return (
     <button
       onClick={onClick}
-      className="panel group min-h-[150px] p-4 text-left transition hover:-translate-y-0.5 hover:shadow-[0_14px_35px_rgba(18,67,59,.1)] sm:min-h-0 sm:p-5"
+      className={`panel group min-h-[150px] p-4 text-left transition duration-200 hover:-translate-y-1 sm:min-h-0 sm:p-5 ${
+        isEnterprise
+          ? 'hover:border-blue-300 hover:shadow-md'
+          : isIndustrial
+            ? 'hover:border-amber-500 hover:shadow-md'
+            : 'hover:border-slate-700 hover:shadow-[0_16px_36px_rgba(0,0,0,0.5)]'
+      }`}
     >
       <div className="mb-5 flex items-center justify-between">
         <span
@@ -783,11 +1076,28 @@ function Metric({
         >
           <Icon size={21} />
         </span>
-        {onClick && <ChevronRight size={18} className="text-[#91a8a3]" />}
+        {onClick && (
+          <ChevronRight
+            size={18}
+            className={`transition ${
+              isEnterprise
+                ? 'text-slate-400 group-hover:text-blue-600'
+                : isIndustrial
+                  ? 'text-slate-400 group-hover:text-amber-600'
+                  : 'text-slate-600 group-hover:text-emerald-400'
+            }`}
+          />
+        )}
       </div>
-      <p className="text-sm font-semibold text-[#617873]">{label}</p>
-      <p className="mt-1 text-[22px] font-black tracking-[-.04em] sm:text-[28px]">{value}</p>
-      <p className="mt-2 line-clamp-2 text-xs leading-4 text-[#81938f]">{note}</p>
+      <p className={`text-xs font-bold tracking-wide uppercase ${
+        isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-400'
+      }`}>{label}</p>
+      <p className={`mt-1 text-[22px] font-black tracking-[-.04em] font-mono tabular-nums sm:text-[28px] ${
+        isEnterprise || isIndustrial ? 'text-slate-950' : 'text-slate-100'
+      }`}>{value}</p>
+      <p className={`mt-2 line-clamp-2 text-xs leading-4 ${
+        isEnterprise || isIndustrial ? 'text-slate-500 font-medium' : 'text-slate-500'
+      }`}>{note}</p>
     </button>
   );
 }
@@ -1161,6 +1471,8 @@ function Review({
       setResolving(false);
     }
   };
+  const { isIndustrial, isEnterprise } = useDesignTheme();
+
   if (!selected)
     return (
       <EmptyState
@@ -1169,25 +1481,65 @@ function Review({
       />
     );
   return (
-    <div className="grid min-h-[680px] overflow-hidden rounded-2xl border border-[#dbe8e5] bg-white shadow-[0_10px_34px_rgba(16,62,54,.06)] xl:grid-cols-[330px_1fr]">
-      <aside className="border-b border-[#dbe8e5] bg-[#f8fbfa] xl:border-b-0 xl:border-r">
-        <div className="border-b border-[#dbe8e5] p-4">
+    <div className={`grid min-h-[680px] overflow-hidden rounded-2xl transition shadow-xl xl:grid-cols-[330px_1fr] ${
+      isEnterprise
+        ? 'border border-slate-200 bg-white shadow-md'
+        : isIndustrial
+          ? 'border-2 border-slate-300 bg-white shadow-xl'
+          : 'border border-slate-800 bg-[#0d131f] shadow-[0_16px_40px_rgba(0,0,0,0.5)]'
+    }`}>
+      <aside className={`border-b xl:border-b-0 xl:border-r ${
+        isEnterprise
+          ? 'border-slate-200 bg-slate-50/70'
+          : isIndustrial
+            ? 'border-slate-300 bg-[#f8fafc]'
+            : 'border-slate-800 bg-[#090d16]'
+      }`}>
+        <div className={`border-b p-4 ${
+          isEnterprise || isIndustrial ? 'border-slate-200' : 'border-slate-800'
+        }`}>
           <div className="relative">
             <Search
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-[#809690]"
+              className={`absolute left-3 top-1/2 -translate-y-1/2 ${
+                isEnterprise || isIndustrial ? 'text-slate-400' : 'text-slate-500'
+              }`}
               size={16}
             />
             <Input
               aria-label="검수 문서 검색"
               placeholder="고객, 차량, 파일 검색"
-              className="rounded-xl border-[#cfe0dc] bg-white pl-9"
+              className={`rounded-xl pl-9 ${
+                isEnterprise
+                  ? 'border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-blue-500'
+                  : isIndustrial
+                    ? 'border-2 border-slate-300 bg-white text-slate-950 font-bold placeholder:text-slate-400 focus:border-amber-500'
+                    : 'border-slate-700 bg-slate-950 text-slate-100 placeholder:text-slate-500 focus:border-emerald-500'
+              }`}
             />
           </div>
           <div className="mt-3 flex gap-2">
-            <Badge variant="secondary" className="bg-[#fff0d4] text-[#955b08]">
+            <Badge
+              variant="secondary"
+              className={
+                isEnterprise
+                  ? 'bg-blue-100 text-blue-800 border border-blue-200 font-bold'
+                  : isIndustrial
+                    ? 'bg-amber-500 text-slate-950 font-black border border-amber-600'
+                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 glow-box-amber'
+              }
+            >
               대기 {pendingDocs.length}
             </Badge>
-            <Badge variant="outline">낮은 신뢰도 우선</Badge>
+            <Badge
+              variant="outline"
+              className={
+                isEnterprise || isIndustrial
+                  ? 'border-slate-200 text-slate-600 font-semibold'
+                  : 'border-slate-700 text-slate-400'
+              }
+            >
+              낮은 신뢰도 우선
+            </Badge>
           </div>
         </div>
         <div className="flex snap-x gap-2 overflow-x-auto p-3 xl:block xl:max-h-[590px] xl:space-y-0 xl:overflow-y-auto xl:p-0">
@@ -1195,29 +1547,60 @@ function Review({
             const issues =
               document.fields.filter((item) => shouldHighlightField(item))
                 .length + Number(document.duplicateCandidate);
+            const isSelected = document.id === selected.id;
             return (
               <button
                 aria-label={`${document.customerName} ${document.vehicleLabel} 검수`}
                 key={document.id}
                 onClick={() => setSelectedId(document.id)}
-                className={`min-w-[250px] snap-start rounded-xl border border-[#dbe8e5] p-4 text-left xl:w-full xl:min-w-0 xl:rounded-none xl:border-x-0 xl:border-t-0 ${document.id === selected.id ? 'bg-[#e6f7f2]' : 'bg-white hover:bg-white'}`}
+                className={`min-w-[250px] snap-start rounded-xl border p-4 text-left transition xl:w-full xl:min-w-0 xl:rounded-none xl:border-x-0 xl:border-t-0 ${
+                  isSelected
+                    ? isEnterprise
+                      ? 'bg-blue-50/80 border-l-4 border-l-blue-600 border-slate-200 text-slate-900 shadow-xs'
+                      : isIndustrial
+                        ? 'bg-amber-500/15 border-l-4 border-l-amber-500 border-slate-200 text-slate-950 font-bold shadow-xs'
+                        : 'bg-emerald-500/10 border-l-2 border-l-emerald-400 border-slate-800 text-slate-100'
+                    : isEnterprise || isIndustrial
+                      ? 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                      : 'bg-slate-900/30 border-slate-800/80 text-slate-300 hover:bg-slate-800/50'
+                }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-extrabold">
+                    <p className={`truncate text-sm font-extrabold ${
+                      isEnterprise || isIndustrial ? 'text-slate-950' : 'text-slate-100'
+                    }`}>
                       {document.customerName} · {document.vehicleLabel}
                     </p>
-                    <p className="mt-1 truncate text-xs text-[#6c817c]">
+                    <p className={`mt-1 truncate text-xs ${
+                      isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-400'
+                    }`}>
                       {document.fileName}
                     </p>
                   </div>
-                  <span className="rounded-full bg-[#fff0d4] px-2 py-1 text-[11px] font-black text-[#9a5d00]">
+                  <span className={`rounded-full px-2 py-1 text-[11px] font-black font-mono border ${
+                    isEnterprise
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : isIndustrial
+                        ? 'bg-amber-500 text-slate-950 border-amber-600'
+                        : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  }`}>
                     {issues}개
                   </span>
                 </div>
                 <div className="mt-3 flex items-center justify-between text-xs">
-                  <span className="text-[#6c817c]">{document.shopName}</span>
-                  <strong>{won.format(document.amount)}</strong>
+                  <span className={isEnterprise || isIndustrial ? 'text-slate-500 font-medium' : 'text-slate-400'}>
+                    {document.shopName}
+                  </span>
+                  <strong className={`font-mono tabular-nums ${
+                    isEnterprise
+                      ? 'text-blue-600 font-bold'
+                      : isIndustrial
+                        ? 'text-amber-600 font-black'
+                        : 'text-emerald-400'
+                  }`}>
+                    {won.format(document.amount)}
+                  </strong>
                 </div>
               </button>
             );
@@ -1225,22 +1608,63 @@ function Review({
         </div>
       </aside>
       <section className="min-w-0">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#dbe8e5] px-5 py-4">
-          <div>
-            <p className="text-sm font-extrabold">{selected.fileName}</p>
-            <p className="text-xs text-[#71857f]">{selected.id} · 2026-09-03</p>
+        <div className={`flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4 ${
+          isEnterprise
+            ? 'border-slate-200 bg-slate-50/90'
+            : isIndustrial
+              ? 'border-b-2 border-slate-200 bg-slate-100/90'
+              : 'border-slate-800 bg-[#0d131f]'
+        }`}>
+          <div className="flex flex-wrap items-center gap-3">
+            <div>
+              <p className={`text-sm font-extrabold ${
+                isEnterprise || isIndustrial ? 'text-slate-950' : 'text-slate-100'
+              }`}>
+                {selected.fileName}
+              </p>
+              <p className={`text-xs font-mono ${
+                isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-400'
+              }`}>
+                {selected.id} · 2026-09-06
+              </p>
+            </div>
+            {isIndustrial && (
+              <div className="flex items-center gap-2 ml-2 pl-3 border-l-2 border-slate-300">
+                <span className="rounded-md bg-[#18202F] px-3 py-1 text-xs font-black font-mono text-white shadow-xs">
+                  PASS 98%
+                </span>
+                <span className="rounded-md bg-[#F59E0B] px-3 py-1 text-xs font-black font-mono text-slate-950 shadow-xs">
+                  WARNING 1
+                </span>
+                <span className="rounded-md border-2 border-slate-900 bg-white px-3 py-0.5 text-xs font-black font-mono text-slate-900 shadow-xs">
+                  MANUAL CHECK
+                </span>
+              </div>
+            )}
           </div>
           <div className="hidden gap-2 sm:flex">
             <Button
               variant="outline"
-              className="rounded-xl text-[#9f4138]"
+              className={`rounded-xl font-bold transition ${
+                isEnterprise
+                  ? 'border-rose-200 text-rose-600 hover:bg-rose-50'
+                  : isIndustrial
+                    ? 'border-2 border-slate-300 bg-white text-slate-800 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 h-10 px-4'
+                    : 'border-rose-500/30 text-rose-400 hover:bg-rose-500/10 hover:text-rose-300'
+              }`}
               onClick={() => resolve('rejected')}
               disabled={resolving}
             >
               <X size={16} /> 반려
             </Button>
             <Button
-              className="rounded-xl bg-[#0d6d5d]"
+              className={`rounded-xl font-black transition ${
+                isEnterprise
+                  ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm h-10 px-5'
+                  : isIndustrial
+                    ? 'bg-[#F59E0B] hover:bg-[#D97706] text-slate-950 shadow-md h-10 px-6 tracking-wide'
+                    : 'bg-emerald-500 hover:bg-emerald-400 glow-emerald font-bold text-slate-950'
+              }`}
               onClick={() => resolve('approved')}
               disabled={resolving}
             >
@@ -1250,37 +1674,99 @@ function Review({
         </div>
         <div className="grid lg:grid-cols-[minmax(300px,.9fr)_minmax(360px,1.1fr)]">
           <DocumentPreview document={selected} />
-          <div className="p-4 sm:p-6">
+          <div className={`p-4 sm:p-6 ${
+            isEnterprise || isIndustrial ? 'bg-white' : 'bg-[#0d131f]'
+          }`}>
             <div className="mb-5 flex items-center justify-between">
               <div>
-                <p className="eyebrow">AI 판독</p>
-                <h2 className="section-title">확인이 필요한 항목</h2>
+                <p className={`eyebrow ${isIndustrial ? 'text-amber-600 font-black' : isEnterprise ? 'text-blue-600 font-bold' : ''}`}>
+                  {isIndustrial ? 'Inputs & Field Inspection' : 'AI 판독'}
+                </p>
+                <h2 className={`section-title ${
+                  isEnterprise || isIndustrial ? 'text-slate-950 font-black' : ''
+                }`}>
+                  확인이 필요한 항목
+                </h2>
               </div>
-              <Badge className="bg-[#fff0d4] text-[#945a00] hover:bg-[#fff0d4]">
+              <Badge className={
+                isEnterprise
+                  ? 'bg-amber-100 text-amber-800 border border-amber-300 font-bold'
+                  : isIndustrial
+                    ? 'bg-amber-500 text-slate-950 font-black border border-amber-600 text-xs px-2.5 py-1'
+                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 glow-box-amber'
+              }>
                 {
                   selected.fields.filter((item) => shouldHighlightField(item))
                     .length
                 }
-                개
+                개 주의
               </Badge>
             </div>
+
+            {/* In Industrial mode: Badges State & Field Quick Guide */}
+            {isIndustrial && (
+              <div className="mb-5 rounded-xl border-2 border-slate-200 bg-slate-50 p-3.5 text-xs text-slate-700">
+                <p className="font-bold text-slate-900 mb-2 flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
+                  현장 모바일/태블릿 원터치 검수 가이드
+                </p>
+                <div className="grid grid-cols-3 gap-2 text-center font-mono font-bold">
+                  <div className="rounded border border-slate-300 bg-white py-1 text-slate-800 shadow-xs">
+                    PASS: 정상 필드
+                  </div>
+                  <div className="rounded border border-amber-300 bg-amber-100 py-1 text-amber-900 shadow-xs">
+                    WARN: 보정 필요
+                  </div>
+                  <div className="rounded border-2 border-slate-900 bg-white py-0.5 text-slate-900 shadow-xs">
+                    CHECK: 수기 입력
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-4">
               {selected.fields.map((field) => {
                 const highlight = shouldHighlightField(field);
                 return (
                   <div
                     key={field.id}
-                    className={`rounded-xl border p-4 ${highlight ? 'border-[#efcf8b] bg-[#fffbf1]' : 'border-[#dce9e6] bg-[#f9fbfa]'}`}
+                    className={`rounded-xl border p-4 transition ${
+                      isEnterprise
+                        ? highlight
+                          ? 'border-amber-400 bg-amber-50/50 shadow-xs'
+                          : 'border-slate-200 bg-slate-50/50'
+                        : isIndustrial
+                          ? highlight
+                            ? 'border-2 border-amber-500 bg-amber-50/70 shadow-xs'
+                            : 'border-2 border-slate-200 bg-slate-50/50'
+                          : highlight
+                            ? 'border-amber-500/40 bg-amber-500/5 glow-box-amber'
+                            : 'border-slate-800 bg-slate-900/60'
+                    }`}
                   >
                     <div className="mb-2 flex items-center justify-between">
                       <label
                         htmlFor={field.id}
-                        className="text-sm font-extrabold"
+                        className={`text-sm font-extrabold ${
+                          isEnterprise || isIndustrial ? 'text-slate-900' : 'text-slate-200'
+                        }`}
                       >
                         {field.label}
                       </label>
                       <span
-                        className={`text-xs font-black ${field.confidence >= 0.96 ? 'text-[#14735f]' : 'text-[#b46c00]'}`}
+                        className={`text-xs font-black font-mono ${
+                          field.confidence >= 0.96
+                            ? isEnterprise
+                              ? 'text-emerald-600 font-bold'
+                              : isIndustrial
+                                ? 'text-emerald-700 font-black'
+                                : 'text-emerald-400'
+                            : isEnterprise
+                              ? 'text-amber-600 font-bold'
+                              : isIndustrial
+                                ? 'text-amber-700 font-black'
+                                : 'text-amber-400'
+                        }`}
                       >
                         {Math.round(field.confidence * 100)}%
                       </span>
@@ -1291,20 +1777,32 @@ function Review({
                       onChange={(event) =>
                         updateField(field.id, event.target.value)
                       }
-                      className={`h-11 rounded-lg bg-white ${highlight ? 'border-[#e3b859]' : 'border-[#cededb]'}`}
+                      className={`h-12 rounded-lg font-mono tabular-nums text-base font-bold ${
+                        isEnterprise
+                          ? `bg-white text-slate-900 ${highlight ? 'border-amber-400 focus:border-amber-500' : 'border-slate-200 focus:border-blue-500'}`
+                          : isIndustrial
+                            ? `bg-white text-slate-950 border-2 ${highlight ? 'border-amber-500 focus:border-amber-600 ring-2 ring-amber-500/20' : 'border-slate-300 focus:border-amber-500'}`
+                            : `bg-slate-950 text-slate-100 ${highlight ? 'border-amber-500/60 focus:border-amber-400' : 'border-slate-700 focus:border-emerald-500'}`
+                      }`}
                       placeholder="확인 후 입력"
                     />
                     {highlight && (
-                      <div className="mt-2 flex gap-2 text-xs leading-5 text-[#8a621f]">
-                        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                      <div className={`mt-2 flex gap-2 text-xs leading-5 ${
+                        isEnterprise || isIndustrial ? 'text-amber-800 font-semibold' : 'text-amber-300'
+                      }`}>
+                        <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-500" />
                         <span>{field.validationMessage}</span>
                       </div>
                     )}
                     {field.rawValue &&
                       field.rawValue !== field.normalizedValue && (
-                        <p className="mt-2 text-xs text-[#71847f]">
+                        <p className={`mt-2 text-xs ${
+                          isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-400'
+                        }`}>
                           원본 판독:{' '}
-                          <span className="font-semibold text-[#425b55]">
+                          <span className={`font-semibold font-mono ${
+                            isEnterprise || isIndustrial ? 'text-slate-800' : 'text-slate-300'
+                          }`}>
                             {field.rawValue}
                           </span>
                         </p>
@@ -1313,12 +1811,27 @@ function Review({
                 );
               })}
             </div>
+
+            {/* Industrial Rugged Action Button */}
+            {isIndustrial && (
+              <div className="mt-6 pt-4 border-t-2 border-slate-200">
+                <Button
+                  onClick={() => resolve('approved')}
+                  disabled={resolving}
+                  className="w-full h-14 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-slate-950 font-black text-base shadow-lg tracking-wide transition active:scale-[0.99] flex items-center justify-center gap-2"
+                >
+                  <Check size={20} strokeWidth={3} />
+                  <span>Execute action button (수정 후 최종 승인)</span>
+                </Button>
+              </div>
+            )}
+
             {selected.duplicateCandidate && (
-              <div className="mt-4 flex gap-3 rounded-xl border border-[#cebdf0] bg-[#f5f1ff] p-4 text-sm text-[#5a438e]">
-                <ListChecks size={18} />
+              <div className="mt-4 flex gap-3 rounded-xl border border-purple-500/40 bg-purple-500/10 p-4 text-sm text-purple-300">
+                <ListChecks size={18} className="text-purple-400" />
                 <div>
                   <p className="font-bold">중복 후보가 있습니다</p>
-                  <p className="mt-1 text-xs">
+                  <p className="mt-1 text-xs text-purple-200/80">
                     이미지 해시·차량번호·작업 항목을 함께 비교한 뒤 승인하세요.
                   </p>
                 </div>
@@ -1326,17 +1839,35 @@ function Review({
             )}
           </div>
         </div>
-        <div className="sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-20 grid grid-cols-2 gap-2 border-t border-[#dbe8e5] bg-white/96 p-3 shadow-[0_-8px_24px_rgba(8,41,37,.10)] backdrop-blur sm:hidden">
+        <div className={`sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-20 grid grid-cols-2 gap-2 border-t p-3 backdrop-blur sm:hidden ${
+          isEnterprise
+            ? 'border-slate-200 bg-white/95 shadow-[0_-4px_20px_rgba(0,0,0,0.08)]'
+            : isIndustrial
+              ? 'border-t-2 border-slate-300 bg-white/98 shadow-[0_-6px_25px_rgba(0,0,0,0.12)]'
+              : 'border-slate-800 bg-[#0b0f17]/95 shadow-[0_-8px_30px_rgba(0,0,0,.6)]'
+        }`}>
           <Button
             variant="outline"
-            className="min-h-12 rounded-xl border-[#d8b5b0] text-[#9f4138]"
+            className={`min-h-12 rounded-xl font-bold ${
+              isEnterprise
+                ? 'border-rose-200 text-rose-600 hover:bg-rose-50'
+                : isIndustrial
+                  ? 'border-2 border-slate-300 bg-white text-slate-900 hover:bg-rose-50 hover:text-rose-700'
+                  : 'border-rose-500/30 text-rose-400 hover:bg-rose-500/10 hover:text-rose-300'
+            }`}
             onClick={() => resolve('rejected')}
             disabled={resolving}
           >
             <X size={17} /> 반려
           </Button>
           <Button
-            className="min-h-12 rounded-xl bg-[#0d6d5d]"
+            className={`min-h-12 rounded-xl font-black transition ${
+              isEnterprise
+                ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm'
+                : isIndustrial
+                  ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md text-base'
+                  : 'bg-emerald-500 hover:bg-emerald-400 glow-emerald font-bold text-slate-950'
+            }`}
             onClick={() => resolve('approved')}
             disabled={resolving}
           >
@@ -1349,13 +1880,39 @@ function Review({
 }
 
 function DocumentPreview({ document }: { document: ReviewDocument }) {
+  const { isIndustrial, isEnterprise } = useDesignTheme();
+
   return (
-    <div className="border-b border-[#e2ece9] bg-[#eaf0ee] p-4 lg:border-b-0 lg:border-r lg:p-5">
+    <div className={`p-4 lg:border-b-0 lg:border-r lg:p-5 ${
+      isEnterprise
+        ? 'border-b border-slate-200 bg-slate-50/50 lg:border-r-slate-200'
+        : isIndustrial
+          ? 'border-b-2 border-slate-200 bg-[#e8ecf1] lg:border-r-2 lg:border-r-slate-300'
+          : 'border-b border-slate-800 bg-[#070a0f] lg:border-r-slate-800'
+    }`}>
       <div className="mb-3 flex items-center justify-between">
-        <p className="text-sm font-extrabold">원본 사진</p>
-        <span className="text-xs font-semibold text-[#647a75]">100%</span>
+        <p className={`text-sm font-extrabold ${
+          isEnterprise || isIndustrial ? 'text-slate-900' : 'text-slate-200'
+        }`}>
+          원본 사진 (OCR 검사기)
+        </p>
+        <span className={`text-xs font-mono font-bold ${
+          isEnterprise
+            ? 'text-blue-600 font-bold'
+            : isIndustrial
+              ? 'text-amber-800 bg-amber-200/70 px-2 py-0.5 rounded border border-amber-300 font-black'
+              : 'text-emerald-400'
+        }`}>
+          {isIndustrial ? '100% HIGH-VIS' : '100% SCALE'}
+        </span>
       </div>
-      <div className="relative mx-auto aspect-[3/4] max-h-[380px] max-w-[285px] overflow-hidden rounded-lg border border-[#c8d4d1] bg-[#fffdf8] shadow-[0_16px_34px_rgba(27,48,43,.13)] sm:max-h-[520px] sm:max-w-none">
+      <div className={`relative mx-auto aspect-[3/4] max-h-[380px] max-w-[285px] overflow-hidden rounded-lg sm:max-h-[520px] sm:max-w-none ${
+        isEnterprise
+          ? 'border border-slate-300 bg-white shadow-md'
+          : isIndustrial
+            ? 'border-2 border-slate-300 bg-white shadow-xl ring-4 ring-slate-300/40'
+            : 'border border-slate-800 bg-[#0b0f17] shadow-[0_16px_40px_rgba(0,0,0,.6)]'
+      }`}>
         {document.sourceUrl ? (
           <Image
             src={document.sourceUrl}
@@ -1363,28 +1920,60 @@ function DocumentPreview({ document }: { document: ReviewDocument }) {
             fill
             unoptimized
             sizes="(max-width: 1024px) 285px, 40vw"
-            className="bg-[#17211f] object-contain"
+            className={`object-contain ${isEnterprise || isIndustrial ? 'bg-white' : 'bg-[#0b0f17]'}`}
           />
         ) : (
-        <div className="flex h-full flex-col p-[8%]">
-          <div className="border-b-2 border-[#20342f] pb-3 text-center text-xl font-black tracking-[.16em]">
+        <div className={`flex h-full flex-col p-[8%] ${
+          isEnterprise || isIndustrial
+            ? 'bg-white text-slate-900'
+            : 'bg-[#0d131f] text-slate-200'
+        }`}>
+          <div className={`border-b-2 pb-3 text-center text-xl font-black tracking-[.16em] ${
+            isEnterprise
+              ? 'border-blue-600 text-blue-600'
+              : isIndustrial
+                ? 'border-amber-500 text-slate-950'
+                : 'border-emerald-500 text-emerald-400'
+          }`}>
             정 비 내 역 서
           </div>
-          <div className="mt-5 grid grid-cols-[90px_1fr] border border-[#8d9c98] text-[11px] leading-8">
-            <span className="border-b border-r px-2 font-bold">정비일</span>
-            <span className="border-b px-2 font-[cursive]">9 / 3</span>
-            <span className="border-b border-r px-2 font-bold">고객명</span>
-            <span className="border-b px-2 font-[cursive]">
+          <div className={`mt-5 grid grid-cols-[90px_1fr] border text-[11px] leading-8 ${
+            isEnterprise || isIndustrial
+              ? 'border-slate-300 text-slate-800'
+              : 'border-slate-700'
+          }`}>
+            <span className={`border-b border-r px-2 font-bold ${
+              isEnterprise || isIndustrial ? 'border-slate-300 bg-slate-50 text-slate-600' : 'border-slate-700 text-slate-400'
+            }`}>정비일</span>
+            <span className={`border-b px-2 font-mono ${
+              isEnterprise || isIndustrial ? 'border-slate-300' : 'border-slate-700'
+            }`}>9 / 3</span>
+            <span className={`border-b border-r px-2 font-bold ${
+              isEnterprise || isIndustrial ? 'border-slate-300 bg-slate-50 text-slate-600' : 'border-slate-700 text-slate-400'
+            }`}>고객명</span>
+            <span className={`border-b px-2 font-bold ${
+              isEnterprise || isIndustrial ? 'border-slate-300 text-slate-950' : 'border-slate-700'
+            }`}>
               {document.customerName}
             </span>
-            <span className="border-b border-r px-2 font-bold">차량</span>
-            <span className="border-b px-2 font-[cursive]">
+            <span className={`border-b border-r px-2 font-bold ${
+              isEnterprise || isIndustrial ? 'border-slate-300 bg-slate-50 text-slate-600' : 'border-slate-700 text-slate-400'
+            }`}>차량</span>
+            <span className={`border-b px-2 ${
+              isEnterprise || isIndustrial ? 'border-slate-300' : 'border-slate-700'
+            }`}>
               {document.vehicleLabel}
             </span>
-            <span className="border-r px-2 font-bold">매장</span>
-            <span className="px-2 font-[cursive]">{document.shopName}</span>
+            <span className={`border-r px-2 font-bold ${
+              isEnterprise || isIndustrial ? 'border-slate-300 bg-slate-50 text-slate-600' : 'border-slate-700 text-slate-400'
+            }`}>매장</span>
+            <span className="px-2 font-medium">{document.shopName}</span>
           </div>
-          <div className="mt-6 flex-1 space-y-3 border-y border-[#8d9c98] py-4 text-sm font-[cursive]">
+          <div className={`mt-6 flex-1 space-y-3 border-y py-4 text-sm font-mono ${
+            isEnterprise || isIndustrial
+              ? 'border-slate-300 text-slate-800'
+              : 'border-slate-700'
+          }`}>
             <p>
               •{' '}
               {
@@ -1393,11 +1982,21 @@ function DocumentPreview({ document }: { document: ReviewDocument }) {
               }
             </p>
             <p>• 점검 및 조정</p>
-            <p className="text-right text-base">
+            <p className={`text-right text-base font-black ${
+              isEnterprise
+                ? 'text-blue-600'
+                : isIndustrial
+                  ? 'text-amber-600'
+                  : 'text-emerald-400'
+            }`}>
               합계 {document.amount.toLocaleString()}원
             </p>
           </div>
-          <p className="mt-4 text-center text-xs font-bold">안전 운행하세요</p>
+          <p className={`mt-4 text-center text-xs font-bold ${
+            isEnterprise || isIndustrial ? 'text-slate-400' : 'text-slate-500'
+          }`}>
+            안전 운행하세요 · 모토웍스 공식 정비
+          </p>
         </div>
         )}
         {document.fields
@@ -1406,7 +2005,13 @@ function DocumentPreview({ document }: { document: ReviewDocument }) {
           .map((field, index) => (
             <span
               key={field.id}
-              className="absolute rounded border-2 border-[#f2a81d] bg-[#ffd56a]/15"
+              className={`absolute rounded transition ${
+                isEnterprise
+                  ? 'border-2 border-blue-500 bg-blue-500/20 shadow-xs'
+                  : isIndustrial
+                    ? 'border-3 border-amber-500 bg-amber-400/35 shadow-[0_0_16px_rgba(245,158,11,0.6)]'
+                    : 'border-2 border-emerald-400 bg-emerald-400/20 glow-box-emerald'
+              }`}
               style={{
                 left: `${18 + index * 8}%`,
                 top: `${field.boundingBox.y}%`,
@@ -1416,7 +2021,11 @@ function DocumentPreview({ document }: { document: ReviewDocument }) {
             />
           ))}
         {!document.sourceAvailable && (
-          <div className="absolute inset-x-4 bottom-4 rounded-lg bg-[#33220f]/90 px-3 py-2 text-center text-xs font-semibold text-white">
+          <div className={`absolute inset-x-4 bottom-4 rounded-lg px-3 py-2 text-center text-xs font-semibold ${
+            isEnterprise || isIndustrial
+              ? 'bg-slate-900/90 text-white shadow-md'
+              : 'bg-[#0b0f17]/95 border border-slate-800 text-slate-300'
+          }`}>
             실제 원본 미수신 · Mock 미리보기
           </div>
         )}
@@ -1474,22 +2083,40 @@ function Orders({
     }
   }
 
+  const { isIndustrial, isEnterprise } = useDesignTheme();
+
   return (
     <section className="panel overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e2ece9] p-5 sm:p-6">
+      <div className={`flex flex-wrap items-center justify-between gap-3 border-b p-5 sm:p-6 ${
+        isEnterprise || isIndustrial ? 'border-slate-200' : 'border-slate-800'
+      }`}>
         <div>
           <p className="eyebrow">{isDbLive ? '실제 영구 저장 데이터' : '기준 예시 데이터'}</p>
           <h2 className="section-title">
             정비내역 {rows.length}건 {isDbLive ? '(DB 동기화 완료)' : '(검증 대기)'}
           </h2>
         </div>
-        <Badge variant={isDbLive ? 'default' : 'outline'} className={isDbLive ? 'bg-[#0d6d5d] text-white' : ''}>
+        <Badge variant={isDbLive ? 'default' : 'outline'} className={
+          isDbLive
+            ? isEnterprise
+              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold'
+              : isIndustrial
+                ? 'bg-amber-500 text-slate-950 font-black border border-amber-600 shadow-xs'
+                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 glow-box-emerald'
+            : isEnterprise || isIndustrial
+              ? 'border-slate-200 text-slate-600'
+              : 'border-slate-700 text-slate-400'
+        }>
           {isDbLive ? '영구 데이터베이스 반영됨' : '참조 기준값'}
         </Badge>
       </div>
       <OrderTable rows={rows} />
-      <div className="border-t border-[#e2ece9] bg-[#f8fbfa] p-5">
-        <p className="text-sm font-semibold">
+      <div className={`border-t p-5 ${
+        isEnterprise || isIndustrial ? 'border-slate-200 bg-slate-50/60' : 'border-slate-800 bg-slate-900/60'
+      }`}>
+        <p className={`text-sm font-semibold ${
+          isEnterprise || isIndustrial ? 'text-slate-800' : 'text-slate-300'
+        }`}>
           {isDbLive ? '실제 집계된 결제 수단별 금액' : '분할 결제 예시'}
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
@@ -1513,43 +2140,118 @@ function OrderTable({
     status: string;
   }>;
 }) {
+  const { isIndustrial, isEnterprise } = useDesignTheme();
+  if (rows.length === 0) {
+    return (
+      <div className={`p-8 text-center text-sm ${
+        isEnterprise || isIndustrial ? 'text-slate-400' : 'text-slate-500'
+      }`}>
+        승인된 정비 내역이 없습니다.
+      </div>
+    );
+  }
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] text-left text-sm">
-        <thead className="bg-[#f6f9f8] text-xs uppercase tracking-wide text-[#6d817c]">
-          <tr>
-            <th className="px-6 py-3">정비번호</th>
-            <th className="px-6 py-3">고객·차량</th>
-            <th className="px-6 py-3">매장</th>
-            <th className="px-6 py-3 text-right">금액</th>
-            <th className="px-6 py-3">상태</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className="border-t border-[#e7efed]">
-              <td className="px-6 py-4 font-mono text-xs font-bold">
-                {row.id}
-              </td>
-              <td className="px-6 py-4">
-                <p className="font-bold">{row.customer}</p>
-                <p className="text-xs text-[#71847f]">{row.vehicle}</p>
-              </td>
-              <td className="px-6 py-4">{row.shop}</td>
-              <td className="px-6 py-4 text-right font-extrabold">
+    <>
+      {/* 모바일 전용 반응형 카드 뷰 */}
+      <div className={`divide-y sm:hidden ${
+        isEnterprise || isIndustrial ? 'divide-slate-200' : 'divide-slate-800/80'
+      }`}>
+        {rows.map((row) => (
+          <div key={row.id} className={`p-4 space-y-2 ${
+            isEnterprise || isIndustrial ? 'bg-white' : 'bg-slate-900/30'
+          }`}>
+            <div className="flex items-center justify-between">
+              <span className={`font-mono text-xs font-bold ${
+                isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-400'
+              }`}>{row.id}</span>
+              <StatusBadge
+                label={row.status}
+                tone={row.status.includes('청구') ? 'blue' : 'green'}
+              />
+            </div>
+            <div className="flex items-baseline justify-between">
+              <div>
+                <p className={`font-bold text-sm ${
+                  isEnterprise || isIndustrial ? 'text-slate-900' : 'text-slate-100'
+                }`}>{row.customer}</p>
+                <p className={`text-xs ${
+                  isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-400'
+                }`}>{row.vehicle}</p>
+              </div>
+              <p className={`text-base font-black font-mono tabular-nums ${
+                isEnterprise
+                  ? 'text-blue-600'
+                  : isIndustrial
+                    ? 'text-amber-600'
+                    : 'text-emerald-400'
+              }`}>
                 {won.format(row.amount)}
-              </td>
-              <td className="px-6 py-4">
-                <StatusBadge
-                  label={row.status}
-                  tone={row.status.includes('청구') ? 'blue' : 'green'}
-                />
-              </td>
+              </p>
+            </div>
+            <p className={`text-xs font-mono ${
+              isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-500'
+            }`}>
+              {row.shop}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {/* 데스크톱 전용 테이블 뷰 */}
+      <div className="hidden sm:block overflow-x-auto">
+        <table className="w-full min-w-[760px] text-left text-sm">
+          <thead className={`text-xs uppercase tracking-wider font-mono border-b ${
+            isEnterprise || isIndustrial
+              ? 'bg-slate-50 text-slate-600 border-slate-200'
+              : 'bg-slate-950/80 text-slate-400 border-slate-800'
+          }`}>
+            <tr>
+              <th className="px-6 py-3">정비번호</th>
+              <th className="px-6 py-3">고객·차량</th>
+              <th className="px-6 py-3">매장</th>
+              <th className="px-6 py-3 text-right">금액</th>
+              <th className="px-6 py-3">상태</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id} className={`border-t transition ${
+                isEnterprise || isIndustrial
+                  ? 'border-slate-200 hover:bg-slate-50'
+                  : 'border-slate-800/80 hover:bg-slate-800/50'
+              }`}>
+                <td className={`px-6 py-4 font-mono text-xs font-bold ${
+                  isEnterprise || isIndustrial ? 'text-slate-600' : 'text-slate-300'
+                }`}>
+                  {row.id}
+                </td>
+                <td className="px-6 py-4">
+                  <p className={`font-bold ${isEnterprise || isIndustrial ? 'text-slate-900' : 'text-slate-100'}`}>{row.customer}</p>
+                  <p className={`text-xs ${isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-400'}`}>{row.vehicle}</p>
+                </td>
+                <td className={`px-6 py-4 ${isEnterprise || isIndustrial ? 'text-slate-600' : 'text-slate-300'}`}>{row.shop}</td>
+                <td className={`px-6 py-4 text-right font-black font-mono tabular-nums ${
+                  isEnterprise
+                    ? 'text-blue-600'
+                    : isIndustrial
+                      ? 'text-amber-600'
+                      : 'text-emerald-400'
+                }`}>
+                  {won.format(row.amount)}
+                </td>
+                <td className="px-6 py-4">
+                  <StatusBadge
+                    label={row.status}
+                    tone={row.status.includes('청구') ? 'blue' : 'green'}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -1578,14 +2280,14 @@ function Customers({ customers }: { customers: CustomerRecord[] }) {
         {people.map(([name, phone, vehicle, status]) => (
           <div
             key={phone + vehicle}
-            className="flex flex-wrap items-center gap-4 border-t border-[#e5eeec] p-5"
+            className="flex flex-wrap items-center gap-4 border-t border-slate-800/80 p-5 bg-slate-900/30 hover:bg-slate-900/60 transition"
           >
-            <div className="grid h-11 w-11 place-items-center rounded-full bg-[#dff4ef] font-black text-[#0d6d5d]">
+            <div className="grid h-11 w-11 place-items-center rounded-full bg-emerald-500/20 font-black text-emerald-300 border border-emerald-500/40">
               {name[0] || '고'}
             </div>
             <div className="min-w-[190px] flex-1">
-              <p className="font-extrabold">{name}</p>
-              <p className="text-sm text-[#70837e]">
+              <p className="font-extrabold text-slate-100">{name}</p>
+              <p className="text-sm text-slate-400 font-mono">
                 {phone} · {vehicle}
               </p>
             </div>
@@ -1599,25 +2301,25 @@ function Customers({ customers }: { customers: CustomerRecord[] }) {
       <aside className="panel p-5 sm:p-6">
         <p className="eyebrow">병합 검토</p>
         <h2 className="section-title">자동 병합하지 않습니다</h2>
-        <div className="my-5 rounded-xl bg-[#f2f6ff] p-4 text-sm leading-6 text-[#405984]">
+        <div className="my-5 rounded-xl bg-sky-500/10 border border-sky-500/20 p-4 text-sm leading-6 text-sky-200">
           전화번호·차량번호·차종의 일치 근거와 충돌을 함께 보여주고, 사람이
           승인한 병합 이력을 보존합니다. (SHA-256 해시 기반 동명이인 분리)
         </div>
-        <div className="rounded-xl border border-[#e0e9e7] p-4">
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
           <div className="flex justify-between">
-            <strong>박○진 ↔ 박진○</strong>
-            <Badge variant="outline">후보 87%</Badge>
+            <strong className="text-slate-100">박○진 ↔ 박진○</strong>
+            <Badge variant="outline" className="border-amber-500/40 text-amber-300">후보 87%</Badge>
           </div>
-          <ul className="mt-3 space-y-2 text-xs text-[#627873]">
-            <li>✓ 전화번호 해시 일치</li>
-            <li>✓ 차량번호 일치</li>
-            <li className="text-[#ad5f0e]">! 차종 표기 충돌 (확인 필요)</li>
+          <ul className="mt-3 space-y-2 text-xs text-slate-400 font-mono">
+            <li className="text-emerald-400">✓ 전화번호 해시 일치</li>
+            <li className="text-emerald-400">✓ 차량번호 일치</li>
+            <li className="text-amber-400">! 차종 표기 충돌 (확인 필요)</li>
           </ul>
           <div className="mt-4 flex gap-2">
-            <Button variant="outline" size="sm" className="flex-1">
+            <Button variant="outline" size="sm" className="flex-1 border-slate-700 text-slate-300 hover:border-slate-600">
               분리 유지
             </Button>
-            <Button size="sm" className="flex-1 bg-[#0d6d5d]">
+            <Button size="sm" className="flex-1 bg-emerald-500 text-slate-950 font-bold hover:bg-emerald-400 glow-emerald">
               병합 승인
             </Button>
           </div>
@@ -1671,9 +2373,42 @@ function Rentals({ rentals }: { rentals: RentalRecord[] }) {
         eyebrow={isDbLive ? 'DB 렌트 정산' : '렌트·리스'}
         title={`0원 결제와 업체 청구를 분리 (${isDbLive ? `${rentals.length}건 DB 영구저장` : '참조 예시'})`}
       />
-      <div className="overflow-x-auto">
+      {/* 모바일 전용 렌트미수금 카드 리스트 */}
+      <div className="divide-y divide-slate-800/80 sm:hidden">
+        {rows.map((row) => (
+          <div key={row.id} className="p-4 space-y-3 bg-slate-900/30">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-bold text-sm text-slate-100">{row.company}</p>
+                <p className="text-xs text-slate-400">{row.vehicle}</p>
+              </div>
+              <StatusBadge
+                label={row.status}
+                tone={row.status.includes('예정') ? 'amber' : 'green'}
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-2 rounded-xl bg-slate-950/80 border border-slate-800/80 p-2.5 text-center text-xs">
+              <div>
+                <span className="text-slate-400">기준가</span>
+                <p className="font-semibold font-mono text-slate-200 mt-0.5">{won.format(row.base)}</p>
+              </div>
+              <div>
+                <span className="text-slate-400">고객결제</span>
+                <p className="font-semibold font-mono text-slate-200 mt-0.5">{won.format(row.customer)}</p>
+              </div>
+              <div>
+                <span className="text-amber-400 font-bold">미수금</span>
+                <p className="font-bold font-mono text-amber-400 mt-0.5">{won.format(row.due)}</p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 데스크톱 전용 테이블 */}
+      <div className="hidden sm:block overflow-x-auto">
         <table className="w-full min-w-[900px] text-sm">
-          <thead className="bg-[#f6f9f8] text-left text-xs text-[#637a74]">
+          <thead className="bg-slate-950/80 text-left text-xs uppercase font-mono tracking-wider text-slate-400 border-b border-slate-800">
             <tr>
               {[
                 '업체·차량',
@@ -1692,16 +2427,16 @@ function Rentals({ rentals }: { rentals: RentalRecord[] }) {
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.id} className="border-t border-[#e5eeec]">
+              <tr key={row.id} className="border-t border-slate-800/80 hover:bg-slate-800/50 transition">
                 <td className="px-5 py-4">
-                  <p className="font-bold">{row.company}</p>
-                  <p className="text-xs text-[#70837e]">{row.vehicle}</p>
+                  <p className="font-bold text-slate-100">{row.company}</p>
+                  <p className="text-xs text-slate-400">{row.vehicle}</p>
                 </td>
                 {[row.base, row.customer, row.billed, row.paid, row.due].map(
                   (value, i) => (
                     <td
                       key={i}
-                      className={`px-5 py-4 font-semibold ${i === 4 && value > 0 ? 'text-[#bd5c14]' : ''}`}
+                      className={`px-5 py-4 font-semibold font-mono tabular-nums ${i === 4 && value > 0 ? 'text-amber-400 font-bold' : 'text-slate-200'}`}
                     >
                       {won.format(value)}
                     </td>
@@ -2273,31 +3008,31 @@ function Audit({
         title={`수정·승인 및 권한 변경 근거 (${isDbLive ? `${auditLogs.length}건 DB 영구 보존됨` : `${changedDocs.length}건`})`}
       />
       {isDbLive ? (
-        <div className="divide-y divide-[#e5eeec]">
+        <div className="divide-y divide-slate-800/80">
           {auditLogs.map((log) => (
             <div
               key={log.id}
-              className="grid gap-3 p-5 sm:grid-cols-[200px_1fr_auto]"
+              className="grid gap-3 p-5 sm:grid-cols-[200px_1fr_auto] bg-slate-900/20 hover:bg-slate-900/50 transition"
             >
               <div>
-                <p className="font-mono text-xs font-bold text-[#0c3a33]">{log.id.slice(0, 16)}...</p>
-                <p className="text-xs text-[#758782]">
+                <p className="font-mono text-xs font-bold text-emerald-400">{log.id.slice(0, 16)}...</p>
+                <p className="text-xs text-slate-400 font-mono">
                   {new Date(log.createdAt).toLocaleString('ko-KR')}
                 </p>
-                <p className="text-xs font-semibold text-[#0f6c5b]">{log.shopName}</p>
+                <p className="text-xs font-semibold text-slate-300">{log.shopName}</p>
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <p className="text-sm font-bold text-[#102522]">{log.action}</p>
-                  <span className="rounded bg-[#f0f4f3] px-2 py-0.5 text-[11px] font-mono text-[#5b736e]">
+                  <p className="text-sm font-bold text-slate-100">{log.action}</p>
+                  <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-mono text-slate-300">
                     {log.entityType} #{log.entityId.slice(0, 8)}
                   </span>
                 </div>
-                <p className="mt-1 text-xs text-[#657a75]">
-                  수행자: <strong>{log.actorName}</strong>
+                <p className="mt-1 text-xs text-slate-400">
+                  수행자: <strong className="text-slate-200">{log.actorName}</strong>
                 </p>
                 {Boolean(log.detail) && (
-                  <pre className="mt-2 max-h-24 overflow-auto rounded-lg bg-[#f6f9f8] p-2 text-[11px] text-[#425d57] font-mono">
+                  <pre className="mt-2 max-h-24 overflow-auto rounded-lg bg-slate-950/90 border border-slate-800/80 p-2 text-[11px] text-emerald-400/90 font-mono">
                     {typeof log.detail === 'string' ? log.detail : JSON.stringify(log.detail, null, 2)}
                   </pre>
                 )}
@@ -2312,25 +3047,25 @@ function Audit({
           ))}
         </div>
       ) : changedDocs.length ? (
-        <div>
+        <div className="divide-y divide-slate-800/80">
           {changedDocs.map((d) => (
             <div
               key={d.id}
-              className="grid gap-3 border-t border-[#e5eeec] p-5 sm:grid-cols-[180px_1fr_auto]"
+              className="grid gap-3 p-5 sm:grid-cols-[180px_1fr_auto] bg-slate-900/20 hover:bg-slate-900/50 transition"
             >
               <div>
-                <p className="font-mono text-xs font-bold">{d.id}</p>
-                <p className="text-xs text-[#758782]">세션 기록</p>
+                <p className="font-mono text-xs font-bold text-emerald-400">{d.id}</p>
+                <p className="text-xs text-slate-400">세션 기록</p>
               </div>
               <div>
-                <p className="text-sm font-bold">
+                <p className="text-sm font-bold text-slate-100">
                   {d.status === 'approved'
                     ? '검수 승인'
                     : d.status === 'rejected'
                       ? '문서 반려'
                       : '필드 수정'}
                 </p>
-                <p className="text-xs text-[#657a75]">
+                <p className="text-xs text-slate-400">
                   원본값과 최종값을 분리 보존 · {d.shopName}
                 </p>
               </div>
@@ -2366,10 +3101,23 @@ function PanelTitle({ eyebrow, title }: { eyebrow: string; title: string }) {
   );
 }
 function PaymentPart({ method, amount }: { method: string; amount: number }) {
+  const { isEnterprise, isIndustrial } = useDesignTheme();
   return (
-    <div className="flex items-center justify-between rounded-xl border border-[#dce8e5] bg-white p-3">
+    <div className={`flex items-center justify-between rounded-xl border p-3 ${
+      isEnterprise
+        ? 'border-slate-200 bg-slate-50 text-slate-900'
+        : isIndustrial
+          ? 'border-2 border-slate-300 bg-white text-slate-950 shadow-xs'
+          : 'border border-slate-800 bg-slate-900/60 text-slate-300'
+    }`}>
       <span className="text-sm font-semibold">{method}</span>
-      <strong>{won.format(amount)}</strong>
+      <strong className={`font-mono tabular-nums font-black ${
+        isEnterprise
+          ? 'text-blue-600'
+          : isIndustrial
+            ? 'text-amber-600'
+            : 'text-emerald-400'
+      }`}>{won.format(amount)}</strong>
     </div>
   );
 }
@@ -2380,36 +3128,65 @@ function StatusBadge({
   label: string;
   tone: 'green' | 'amber' | 'blue';
 }) {
+  const { isEnterprise, isIndustrial } = useDesignTheme();
   const tones = {
-    green: 'bg-[#def6ee] text-[#08705d]',
-    amber: 'bg-[#fff0d5] text-[#9a5d00]',
-    blue: 'bg-[#e4f0ff] text-[#356493]',
+    green: isEnterprise
+      ? 'bg-emerald-50 text-emerald-700 border border-emerald-300'
+      : isIndustrial
+        ? 'bg-[#18202F] text-white border border-slate-700 font-black shadow-xs'
+        : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 glow-box-emerald',
+    amber: isEnterprise
+      ? 'bg-amber-50 text-amber-700 border border-amber-300'
+      : isIndustrial
+        ? 'bg-amber-500 text-slate-950 border border-amber-600 font-black shadow-xs'
+        : 'bg-amber-500/15 text-amber-400 border border-amber-500/30 glow-box-amber',
+    blue: isEnterprise
+      ? 'bg-blue-50 text-blue-700 border border-blue-300'
+      : isIndustrial
+        ? 'bg-white text-slate-900 border-2 border-slate-900 font-black shadow-xs'
+        : 'bg-sky-500/15 text-sky-400 border border-sky-500/30',
   };
   return (
     <span
-      className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-extrabold ${tones[tone]}`}
+      className={`inline-flex whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-bold font-mono tracking-tight ${tones[tone]}`}
     >
       {label}
     </span>
   );
 }
 function InfoRow({ label, value }: { label: string; value: string }) {
+  const { isEnterprise, isIndustrial } = useDesignTheme();
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-[#e7efed] py-2.5 text-sm last:border-0">
-      <dt className="text-[#6b817b]">{label}</dt>
-      <dd className="max-w-[70%] text-right font-bold">{value}</dd>
+    <div className={`flex items-start justify-between gap-4 border-b py-2.5 text-sm last:border-0 ${
+      isEnterprise || isIndustrial ? 'border-slate-200' : 'border-slate-800/80'
+    }`}>
+      <dt className={isEnterprise || isIndustrial ? 'text-slate-500 font-medium' : 'text-slate-400'}>{label}</dt>
+      <dd className={`max-w-[70%] text-right font-bold font-mono tabular-nums ${
+        isEnterprise || isIndustrial ? 'text-slate-900' : 'text-slate-100'
+      }`}>{value}</dd>
     </div>
   );
 }
 function EmptyState({ title, text }: { title: string; text: string }) {
+  const { isEnterprise, isIndustrial } = useDesignTheme();
   return (
     <div className="grid min-h-[420px] place-items-center p-8 text-center">
       <div>
-        <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-[#e2f5f0] text-[#0d725f]">
-          <Check size={26} />
+        <div className={`mx-auto grid h-14 w-14 place-items-center rounded-full ${
+          isEnterprise
+            ? 'bg-blue-50 border border-blue-200 text-blue-600 shadow-sm'
+            : isIndustrial
+              ? 'bg-amber-500 text-slate-950 border-2 border-amber-600 shadow-md font-black'
+              : 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 glow-box-emerald'
+        }`}>
+          <Check size={26} strokeWidth={isIndustrial ? 3 : 2} />
         </div>
-        <h2 className="mt-5 text-xl font-extrabold">{title}</h2>
-        <p className="mt-2 text-sm text-[#667c76]">{text}</p>
+        <h2 className={`mt-5 text-xl font-extrabold ${
+          isEnterprise || isIndustrial ? 'text-slate-900' : 'text-slate-100'
+        }`}>{title}</h2>
+        <p className={`mt-2 text-sm ${
+          isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-400'
+        }`}>{text}</p>
       </div>
     </div>
   );

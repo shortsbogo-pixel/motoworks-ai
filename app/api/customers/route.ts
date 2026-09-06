@@ -4,6 +4,9 @@ import {
   errorResponse,
   getAllowedShops,
   hasPermission,
+  maskName,
+  maskPhone,
+  maskPlate,
   ORGANIZATION_ID,
   requirePermission,
   SHOP_NAMES,
@@ -46,6 +49,9 @@ export async function GET(request: Request) {
     const customers = await Promise.all(
       rows.results.map(async (row) => {
         let name = row.name;
+        if (row.name && row.name.startsWith('v1:') && runtime.DATA_ENCRYPTION_KEY) {
+          name = await decryptValue(row.name, runtime.DATA_ENCRYPTION_KEY);
+        }
         let phone = '';
         if (row.phone_encrypted && runtime.DATA_ENCRYPTION_KEY) {
           phone = await decryptValue(
@@ -55,11 +61,8 @@ export async function GET(request: Request) {
         }
 
         if (!canViewPii) {
-          if (name.length > 2) name = `${name[0]}*${name.slice(2)}`;
-          else if (name.length === 2) name = `${name[0]}*`;
-          if (phone) {
-            phone = phone.replace(/(\d{3})[- ]?(\d{3,4})[- ]?(\d{4})/, '$1-****-$3');
-          }
+          name = maskName(name);
+          phone = maskPhone(phone);
         }
 
         // 해당 고객의 차량 목록
@@ -86,7 +89,7 @@ export async function GET(request: Request) {
               );
             }
             if (!canViewPii && plate) {
-              plate = plate.replace(/(\d{2,3}[가-힣]\s*)(\d{4})/, '$1****');
+              plate = maskPlate(plate);
             }
             return {
               id: v.id,

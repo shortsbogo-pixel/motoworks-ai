@@ -311,24 +311,35 @@ export async function ensureBaseSeed(
   await env.DB.batch(queries);
 }
 
+export function maskName(name: string): string {
+  if (!name || name.length <= 1) return name;
+  if (name.length === 2) return `${name[0]}*`;
+  return `${name[0]}${'*'.repeat(Math.max(1, name.length - 2))}${name[name.length - 1]}`;
+}
+
+export function maskPhone(phone: string): string {
+  if (!phone) return phone;
+  return phone.replace(/(\d{2,3})[- ]?(\d{3,4})[- ]?(\d{4})/, '$1-****-$3');
+}
+
+export function maskPlate(plate: string): string {
+  if (!plate) return plate;
+  return plate.replace(/\d{4}$/, '****');
+}
+
 export async function protectExtraction(
   extraction: GeminiExtraction,
   secret?: string,
 ): Promise<GeminiExtraction> {
+  if (!secret) {
+    throw new HttpError(500, 'DATA_ENCRYPTION_KEY가 누락되어 개인정보(고객명/연락처/차량번호) 암호화 처리가 불가능합니다. 저장을 중단합니다.');
+  }
+
   return {
     ...extraction,
     fields: await Promise.all(
       extraction.fields.map(async (field) => {
         if (!SENSITIVE_FIELDS.has(field.key)) return field;
-        if (!secret) {
-          return {
-            ...field,
-            raw_value: null,
-            normalized_value: null,
-            validation_status: 'conflict' as const,
-            validation_message: '개인정보 암호화 키가 없어 저장하지 않았습니다.',
-          };
-        }
         return {
           ...field,
           raw_value:
@@ -348,22 +359,50 @@ export async function protectExtraction(
 export async function revealExtraction(
   extraction: GeminiExtraction,
   secret?: string,
+  canViewPii = true,
 ): Promise<GeminiExtraction> {
   return {
     ...extraction,
     fields: await Promise.all(
       extraction.fields.map(async (field) => {
-        if (!SENSITIVE_FIELDS.has(field.key) || !secret) return field;
+        if (!SENSITIVE_FIELDS.has(field.key)) return field;
+        if (!secret) return field;
+
+        const decryptedRaw =
+          typeof field.raw_value === 'string'
+            ? await decryptValue(field.raw_value, secret)
+            : field.raw_value;
+        const decryptedNormalized =
+          typeof field.normalized_value === 'string'
+            ? await decryptValue(field.normalized_value, secret)
+            : field.normalized_value;
+
+        if (canViewPii) {
+          return {
+            ...field,
+            raw_value: decryptedRaw,
+            normalized_value: decryptedNormalized,
+          };
+        }
+
+        // view_pii 권한 미보유 시 마스킹 적용
+        let maskedRaw = decryptedRaw;
+        let maskedNormalized = decryptedNormalized;
+        if (field.key === 'customer_name') {
+          maskedRaw = typeof decryptedRaw === 'string' ? maskName(decryptedRaw) : decryptedRaw;
+          maskedNormalized = typeof decryptedNormalized === 'string' ? maskName(decryptedNormalized) : decryptedNormalized;
+        } else if (field.key === 'phone') {
+          maskedRaw = typeof decryptedRaw === 'string' ? maskPhone(decryptedRaw) : decryptedRaw;
+          maskedNormalized = typeof decryptedNormalized === 'string' ? maskPhone(decryptedNormalized) : decryptedNormalized;
+        } else if (field.key === 'vehicle_plate') {
+          maskedRaw = typeof decryptedRaw === 'string' ? maskPlate(decryptedRaw) : decryptedRaw;
+          maskedNormalized = typeof decryptedNormalized === 'string' ? maskPlate(decryptedNormalized) : decryptedNormalized;
+        }
+
         return {
           ...field,
-          raw_value:
-            typeof field.raw_value === 'string'
-              ? await decryptValue(field.raw_value, secret)
-              : field.raw_value,
-          normalized_value:
-            typeof field.normalized_value === 'string'
-              ? await decryptValue(field.normalized_value, secret)
-              : field.normalized_value,
+          raw_value: maskedRaw,
+          normalized_value: maskedNormalized,
         };
       }),
     ),

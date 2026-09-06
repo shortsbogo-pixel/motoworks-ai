@@ -35,6 +35,12 @@ const SUPPORTED_MIME_TYPES = new Set([
 export async function POST(request: Request) {
   const runtime = env as unknown as MotoworksEnv;
   try {
+    if (!runtime.DATA_ENCRYPTION_KEY) {
+      return Response.json(
+        { error: 'DATA_ENCRYPTION_KEY가 설정되지 않아 안전한 개인정보 처리가 불가능합니다.' },
+        { status: 503 },
+      );
+    }
     if (!runtime.GEMINI_API_KEY) {
       return Response.json(
         { error: 'Gemini API 키가 아직 연결되지 않았습니다.' },

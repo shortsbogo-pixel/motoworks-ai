@@ -4,6 +4,7 @@ import {
   encryptValue,
   errorResponse,
   hashPii,
+  maskName,
   ORGANIZATION_ID,
   requirePermission,
   SENSITIVE_FIELDS,
@@ -19,6 +20,12 @@ export async function PATCH(
 ) {
   const runtime = env as unknown as MotoworksEnv;
   try {
+    if (!runtime.DATA_ENCRYPTION_KEY) {
+      return Response.json(
+        { error: 'DATA_ENCRYPTION_KEY가 설정되지 않아 정비 데이터를 안전하게 암호화 저장할 수 없습니다.' },
+        { status: 503 },
+      );
+    }
     const { id } = await context.params;
     const document = await runtime.DB.prepare(
       `SELECT d.shop_id, rt.id AS review_id, rt.status
@@ -94,7 +101,7 @@ export async function PATCH(
     // 1. 필드 수정값 및 correction_logs 준비
     for (const field of existingFields.results) {
       const corrected = submittedMap.get(field.id);
-      if (corrected !== undefined) {
+      if (corrected !== undefined && corrected !== '') {
         let valueToStore: string | null = corrected;
         if (SENSITIVE_FIELDS.has(field.field_key)) {
           if (runtime.DATA_ENCRYPTION_KEY) {
@@ -161,8 +168,9 @@ export async function PATCH(
       // 각 필드의 최종 평문값 계산
       const finalValues: Record<string, string> = {};
       for (const f of existingFields.results) {
-        if (submittedMap.has(f.id)) {
-          finalValues[f.field_key] = submittedMap.get(f.id)!;
+        const submitted = submittedMap.get(f.id);
+        if (submitted !== undefined && submitted !== '') {
+          finalValues[f.field_key] = submitted;
         } else if (f.normalized_value) {
           if (
             SENSITIVE_FIELDS.has(f.field_key) &&
@@ -204,9 +212,14 @@ export async function PATCH(
           customerId = existingCustomer.id;
         } else {
           customerId = `cust:${crypto.randomUUID()}`;
-          const phoneEncrypted = runtime.DATA_ENCRYPTION_KEY
-            ? await encryptValue(rawPhone, runtime.DATA_ENCRYPTION_KEY)
-            : null;
+          const customerNameEncrypted = await encryptValue(
+            rawCustomerName,
+            runtime.DATA_ENCRYPTION_KEY,
+          );
+          const phoneEncrypted = await encryptValue(
+            rawPhone,
+            runtime.DATA_ENCRYPTION_KEY,
+          );
           batchQueries.push(
             runtime.DB.prepare(
               `INSERT INTO customers
@@ -216,7 +229,7 @@ export async function PATCH(
               customerId,
               ORGANIZATION_ID,
               document.shop_id,
-              rawCustomerName,
+              customerNameEncrypted,
               phoneEncrypted,
               phoneHash,
               now,
@@ -225,12 +238,16 @@ export async function PATCH(
         }
       } else {
         customerId = `cust:${crypto.randomUUID()}`;
+        const customerNameEncrypted = await encryptValue(
+          rawCustomerName,
+          runtime.DATA_ENCRYPTION_KEY,
+        );
         batchQueries.push(
           runtime.DB.prepare(
             `INSERT INTO customers
                (id, organization_id, shop_id, name, status, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5)`,
-          ).bind(customerId, ORGANIZATION_ID, document.shop_id, rawCustomerName, now),
+          ).bind(customerId, ORGANIZATION_ID, document.shop_id, customerNameEncrypted, now),
         );
       }
 
@@ -251,9 +268,10 @@ export async function PATCH(
           vehicleId = existingVehicle.id;
         } else {
           vehicleId = `veh:${crypto.randomUUID()}`;
-          const plateEncrypted = runtime.DATA_ENCRYPTION_KEY
-            ? await encryptValue(rawPlate, runtime.DATA_ENCRYPTION_KEY)
-            : null;
+          const plateEncrypted = await encryptValue(
+            rawPlate,
+            runtime.DATA_ENCRYPTION_KEY,
+          );
           batchQueries.push(
             runtime.DB.prepare(
               `INSERT INTO vehicles
@@ -397,7 +415,7 @@ export async function PATCH(
             orderId: createdOrderId,
             amount: totalAmount,
             serviceDate,
-            customerName: rawCustomerName,
+            customerName: maskName(rawCustomerName),
           }),
           request.headers.get('user-agent'),
           now,

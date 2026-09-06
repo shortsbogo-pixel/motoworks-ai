@@ -254,3 +254,61 @@ export const X = createIcon(
     <path d="m6 6 12 12" />
   </>,
 );
+
+// UI Primitive (shadcn) 호환용 아이콘 내보내기
+export const CheckIcon = Check;
+export const XIcon = X;
+export const SearchIcon = Search;
+export const ChevronRightIcon = ChevronRight;
+export const ChevronLeftIcon = createIcon('chevron-left', <path d="m15 18-6-6 6-6" />);
+export const ChevronDownIcon = createIcon('chevron-down', <path d="m6 9 6 6 6-6" />);
+export const ChevronUpIcon = createIcon('chevron-up', <path d="m18 15-6-6-6 6" />);
+export const MoreHorizontalIcon = createIcon(
+  'more-horizontal',
+  <>
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="19" cy="12" r="1" />
+    <circle cx="5" cy="12" r="1" />
+  </>,
+);
+export const MinusIcon = createIcon('minus', <path d="M5 12h14" />);
+export const PanelLeftIcon = createIcon(
+  'panel-left',
+  <>
+    <rect width="18" height="18" x="3" y="3" rx="2" />
+    <path d="M9 3v18" />
+  </>,
+);
+export const Loader2Icon = createIcon(
+  'loader-2',
+  <path d="M21 12a9 9 0 1 1-6.219-8.56" />,
+);
+export const ArrowDownIcon = createIcon(
+  'arrow-down',
+  <path d="M12 5v14m7-7-7 7-7-7" />,
+);
+export const CircleCheckIcon = createIcon(
+  'circle-check',
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <path d="m9 12 2 2 4-4" />
+  </>,
+);
+export const TriangleAlertIcon = AlertTriangle;
+export const InfoIcon = createIcon(
+  'info',
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 16v-4" />
+    <path d="M12 8h.01" />
+  </>,
+);
+export const OctagonXIcon = createIcon(
+  'octagon-x',
+  <>
+    <polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2" />
+    <path d="m15 9-6 6" />
+    <path d="m9 9 6 6" />
+  </>,
+);
+

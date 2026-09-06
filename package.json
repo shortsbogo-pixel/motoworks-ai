@@ -13,8 +13,7 @@
     "format": "oxfmt",
     "db:generate": "drizzle-kit generate",
     "test": "vitest run --config vitest.config.ts",
-    "typecheck": "tsc --noEmit",
-    "postinstall": "node -e \"const fs = require('fs'); const dir = 'node_modules/lucide-react/dist/esm/icons'; if (fs.existsSync(dir)) { ['zodiac-gemini','zodiac-leo','zodiac-libra','zodiac-ophiuchus','zodiac-pisces','zodiac-sagittarius','zodiac-scorpio','zodiac-taurus','zodiac-virgo','zoom-in','zoom-out'].forEach(function(z) { const p = dir + '/' + z + '.mjs'; if (!fs.existsSync(p) || fs.readFileSync(p)[0] === 0) fs.writeFileSync(p, 'import createLucideIcon from \\'../createLucideIcon.mjs\\'; export const __iconNode = []; export default createLucideIcon(\\'' + z + '\\', __iconNode);'); }); }\""
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",

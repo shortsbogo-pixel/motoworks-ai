@@ -1,8 +1,11 @@
 import { env } from 'cloudflare:workers';
 import * as XLSX from 'xlsx';
 import {
+  decryptValue,
   errorResponse,
   getAllowedShops,
+  hasPermission,
+  maskName,
   ORGANIZATION_ID,
   requirePermission,
   SHOP_NAMES,
@@ -47,40 +50,52 @@ export async function GET(request: Request) {
         vehicle_model: string | null;
       }>();
 
-    const docs: ReviewDocument[] = rows.results.map((r) => ({
-      id: r.id,
-      fileName: '정비내역서.jpg',
-      shopName: r.shop_name || SHOP_NAMES[r.shop_id] || '센터 확인',
-      shopCertainty: 'confirmed',
-      customerName: r.customer_name || '고객 미확인',
-      vehicleLabel: r.vehicle_model || '차종 미확인',
-      amount: r.total_amount,
-      status: 'approved',
-      sourceAvailable: true,
-      duplicateCandidate: false,
-      fields: [
-        {
-          id: `${r.id}-date`,
-          key: 'service_date',
-          label: '정비일',
-          rawValue: r.approved_service_date,
-          normalizedValue: r.approved_service_date,
-          confidence: 1,
-          boundingBox: { x: 0, y: 0, width: 0, height: 0 },
-          validationStatus: 'valid',
-        },
-        {
-          id: `${r.id}-item`,
-          key: 'service_item',
-          label: '작업 항목',
-          rawValue: '정비 작업',
-          normalizedValue: '정비 작업',
-          confidence: 1,
-          boundingBox: { x: 0, y: 0, width: 0, height: 0 },
-          validationStatus: 'valid',
-        },
-      ],
-    }));
+    const canViewPii = hasPermission(user, 'view_pii');
+    const docs: ReviewDocument[] = await Promise.all(
+      rows.results.map(async (r) => {
+        let customerName = r.customer_name || '고객 미확인';
+        if (r.customer_name && r.customer_name.startsWith('v1:') && runtime.DATA_ENCRYPTION_KEY) {
+          customerName = await decryptValue(r.customer_name, runtime.DATA_ENCRYPTION_KEY);
+        }
+        if (!canViewPii) {
+          customerName = maskName(customerName);
+        }
+        return {
+          id: r.id,
+          fileName: '정비내역서.jpg',
+          shopName: r.shop_name || SHOP_NAMES[r.shop_id] || '센터 확인',
+          shopCertainty: 'confirmed',
+          customerName,
+          vehicleLabel: r.vehicle_model || '차종 미확인',
+          amount: r.total_amount,
+          status: 'approved',
+          sourceAvailable: true,
+          duplicateCandidate: false,
+          fields: [
+            {
+              id: `${r.id}-date`,
+              key: 'service_date',
+              label: '정비일',
+              rawValue: r.approved_service_date,
+              normalizedValue: r.approved_service_date,
+              confidence: 1,
+              boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+              validationStatus: 'valid',
+            },
+            {
+              id: `${r.id}-item`,
+              key: 'service_item',
+              label: '작업 항목',
+              rawValue: '정비 작업',
+              normalizedValue: '정비 작업',
+              confidence: 1,
+              boundingBox: { x: 0, y: 0, width: 0, height: 0 },
+              validationStatus: 'valid',
+            },
+          ],
+        };
+      }),
+    );
 
     const workbook = buildLegacyWorkbook(docs);
     const buffer = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });

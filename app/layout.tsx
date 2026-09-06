@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   manifest: '/manifest.webmanifest',
 };
 
-export const viewport: Viewport = { themeColor: '#082925' };
+export const viewport: Viewport = { themeColor: '#0b0f17' };
 
 export default function RootLayout({
   children,
@@ -15,8 +15,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ko">
-      <body>{children}</body>
+    <html lang="ko" className="dark bg-[#0b0f17] text-slate-100">
+      <body className="bg-[#0b0f17] text-slate-100 min-h-screen antialiased selection:bg-emerald-500/20 selection:text-emerald-300">{children}</body>
     </html>
   );
 }
