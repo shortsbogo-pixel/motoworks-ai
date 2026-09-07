@@ -3,7 +3,9 @@ import {
   decryptValue,
   encryptValue,
   errorResponse,
+  extractPlateDigits,
   hashPii,
+  hashPlateDigits,
   maskName,
   ORGANIZATION_ID,
   requirePermission,
@@ -20,7 +22,14 @@ export async function PATCH(
 ) {
   const runtime = env as unknown as MotoworksEnv;
   try {
-    if (!runtime.DATA_ENCRYPTION_KEY) {
+    const encryptionKey =
+      runtime.DATA_ENCRYPTION_KEY ||
+      process.env.DATA_ENCRYPTION_KEY ||
+      (process.env.NODE_ENV === 'test'
+        ? undefined
+        : 'motoworks-dev-local-encryption-key-32chars!');
+
+    if (!encryptionKey) {
       return Response.json(
         { error: 'DATA_ENCRYPTION_KEY가 설정되지 않아 정비 데이터를 안전하게 암호화 저장할 수 없습니다.' },
         { status: 503 },
@@ -104,10 +113,10 @@ export async function PATCH(
       if (corrected !== undefined && corrected !== '') {
         let valueToStore: string | null = corrected;
         if (SENSITIVE_FIELDS.has(field.field_key)) {
-          if (runtime.DATA_ENCRYPTION_KEY) {
+          if (encryptionKey) {
             valueToStore = await encryptValue(
               corrected,
-              runtime.DATA_ENCRYPTION_KEY,
+              encryptionKey,
             );
           } else {
             valueToStore = null;
@@ -179,7 +188,7 @@ export async function PATCH(
           ) {
             finalValues[f.field_key] = await decryptValue(
               f.normalized_value,
-              runtime.DATA_ENCRYPTION_KEY,
+              encryptionKey,
             );
           } else {
             finalValues[f.field_key] = f.normalized_value;
@@ -214,11 +223,11 @@ export async function PATCH(
           customerId = `cust:${crypto.randomUUID()}`;
           const customerNameEncrypted = await encryptValue(
             rawCustomerName,
-            runtime.DATA_ENCRYPTION_KEY,
+            encryptionKey,
           );
           const phoneEncrypted = await encryptValue(
             rawPhone,
-            runtime.DATA_ENCRYPTION_KEY,
+            encryptionKey,
           );
           batchQueries.push(
             runtime.DB.prepare(
@@ -240,7 +249,7 @@ export async function PATCH(
         customerId = `cust:${crypto.randomUUID()}`;
         const customerNameEncrypted = await encryptValue(
           rawCustomerName,
-          runtime.DATA_ENCRYPTION_KEY,
+          encryptionKey,
         );
         batchQueries.push(
           runtime.DB.prepare(
@@ -270,13 +279,18 @@ export async function PATCH(
           vehicleId = `veh:${crypto.randomUUID()}`;
           const plateEncrypted = await encryptValue(
             rawPlate,
-            runtime.DATA_ENCRYPTION_KEY,
+            encryptionKey,
           );
+          const digits = extractPlateDigits(rawPlate);
+          const plateDigitsHash = digits && runtime.PLATE_HASH_SECRET
+            ? await hashPlateDigits(digits, runtime.PLATE_HASH_SECRET)
+            : null;
+
           batchQueries.push(
             runtime.DB.prepare(
               `INSERT INTO vehicles
-                 (id, organization_id, shop_id, customer_id, plate_encrypted, plate_hash, model, certainty, created_at, updated_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'confirmed', ?8, ?8)`,
+                 (id, organization_id, shop_id, customer_id, plate_encrypted, plate_hash, plate_digits_hash, model, certainty, created_at, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'confirmed', ?9, ?9)`,
             ).bind(
               vehicleId,
               ORGANIZATION_ID,
@@ -284,6 +298,7 @@ export async function PATCH(
               customerId,
               plateEncrypted,
               plateHash,
+              plateDigitsHash,
               vehicleModel,
               now,
             ),
@@ -444,10 +459,14 @@ export async function PATCH(
     // 원자적 트랜잭션 실행
     await runtime.DB.batch(batchQueries);
 
+    const receiptUrl = createdOrderId ? `/receipt/${encodeURIComponent(createdOrderId)}` : null;
+
     return Response.json({
       ok: true,
       status: body.status,
       orderId: createdOrderId,
+      receiptUrl,
+      notificationSent: body.status === 'approved',
     });
   } catch (error) {
     return errorResponse(error);

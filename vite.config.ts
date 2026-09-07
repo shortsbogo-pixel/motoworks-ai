@@ -1,7 +1,7 @@
 import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
-import { defineConfig } from 'vite';
+import { defineConfig, type UserConfig } from 'vite';
 import hostingConfig from './.openai/hosting.json';
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
@@ -19,8 +19,8 @@ const localBindingConfig = {
     ? [
         {
           binding: d1,
-          database_name: 'site-creator-d1',
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          database_name: 'motoworks-db',
+          database_id: '29bebecb-3552-4da7-a099-4622392a059d',
         },
       ]
     : [],
@@ -28,7 +28,7 @@ const localBindingConfig = {
     ? [
         {
           binding: r2,
-          bucket_name: 'site-creator-r2',
+          bucket_name: 'motoworks-files',
         },
       ]
     : [],
@@ -48,7 +48,7 @@ export default defineConfig(async () => {
     css: { postcss: { plugins: [tailwindcss()] } },
     server: {
       host: '0.0.0.0',
-      allowedHosts: ['terminal.local'],
+      allowedHosts: true,
       ...(isCodexSeatbeltSandbox
         ? { watch: { useFsEvents: false, usePolling: true } }
         : {}),
@@ -61,5 +61,5 @@ export default defineConfig(async () => {
         config: localBindingConfig,
       }),
     ],
-  };
+  } as UserConfig;
 });

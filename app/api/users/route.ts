@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import {
   errorResponse,
+  hashPassword,
   HttpError,
   ORGANIZATION_ID,
   Permission,
@@ -119,7 +120,16 @@ export async function POST(request: Request) {
   try {
     const actor = await requirePermission(request, runtime, 'manage_users');
     const body = (await request.json()) as {
-      action: 'create_role' | 'update_role' | 'assign_role' | 'update_user_status';
+      action:
+        | 'create_user'
+        | 'delete_user'
+        | 'create_role'
+        | 'update_role'
+        | 'assign_role'
+        | 'update_user_status';
+      email?: string;
+      displayName?: string;
+      initialPassword?: string;
       name?: string;
       description?: string;
       permissions?: Permission[];
@@ -131,6 +141,152 @@ export async function POST(request: Request) {
     };
 
     const now = Date.now();
+
+    // 1. 신규 계정 생성 (PBKDF2 해싱, users + user_shop_roles 등록, audit_logs 기록)
+    if (body.action === 'create_user' || (body.email && body.initialPassword)) {
+      const email = (body.email || '').trim().toLowerCase();
+      const displayName = (body.displayName || '').trim();
+      const role = body.role || 'staff';
+      const shopId = body.shopId || null;
+      const initialPassword = body.initialPassword || '';
+
+      if (!email || !displayName || !role || !initialPassword) {
+        throw new HttpError(400, '이메일, 표시 이름, 역할, 초기 비밀번호를 모두 입력해주세요.');
+      }
+
+      if (initialPassword.length < 8) {
+        throw new HttpError(400, '비밀번호는 최소 8자 이상이어야 합니다.');
+      }
+
+      const validRoles = ['admin', 'shop_manager', 'staff', 'viewer'];
+      if (!validRoles.includes(role)) {
+        throw new HttpError(400, `유효하지 않은 역할입니다. (선택 가능: ${validRoles.join(', ')})`);
+      }
+
+      if (shopId && !SHOP_NAMES[shopId]) {
+        throw new HttpError(400, '유효하지 않은 센터(지점)입니다.');
+      }
+
+      // 이메일 중복 확인 (기존 계정 덮어쓰기 금지)
+      const existing = await runtime.DB.prepare(
+        `SELECT id FROM users WHERE email = ?1 AND organization_id = ?2 LIMIT 1`,
+      )
+        .bind(email, ORGANIZATION_ID)
+        .first<{ id: string }>();
+
+      if (existing) {
+        throw new HttpError(409, `이미 등록된 이메일 계정입니다: ${email}`);
+      }
+
+      // 표준 PBKDF2-HMAC-SHA256 (100,000회 반복, 16바이트 솔트) 해싱
+      const passwordHash = await hashPassword(initialPassword);
+      const userId = `user:${email}`;
+      const roleMappingId = `usr_role:${crypto.randomUUID()}`;
+      const targetShopId = role === 'admin' ? null : shopId;
+      const roleId = `role:${role}`;
+
+      await runtime.DB.batch([
+        runtime.DB.prepare(
+          `INSERT INTO users
+             (id, organization_id, external_user_id, email, display_name, status, password_hash, password_updated_at, created_at, updated_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?7, ?7, ?7)`,
+        ).bind(userId, ORGANIZATION_ID, email, email, displayName, passwordHash, now),
+
+        runtime.DB.prepare(
+          `INSERT INTO user_shop_roles
+             (id, organization_id, user_id, shop_id, role, role_id, created_at, updated_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)`,
+        ).bind(roleMappingId, ORGANIZATION_ID, userId, targetShopId, role, roleId, now),
+      ]);
+
+      await logAudit(
+        runtime,
+        actor.id,
+        'user.created',
+        'user',
+        userId,
+        { email, displayName, role, shopId: targetShopId },
+        request,
+      );
+
+      return Response.json({ ok: true, userId }, { status: 201 });
+    }
+
+    // 2. 계정 삭제 (audit_logs 참조 확인: 참조 시 suspended, 무참조 시 삭제)
+    if (body.action === 'delete_user') {
+      const targetUserId = body.userId;
+      if (!targetUserId) {
+        throw new HttpError(400, '삭제할 사용자 ID가 필요합니다.');
+      }
+
+      if (targetUserId === actor.id) {
+        throw new HttpError(400, '현재 로그인된 관리자 계정은 삭제할 수 없습니다.');
+      }
+
+      const targetUser = await runtime.DB.prepare(
+        `SELECT id, email, display_name FROM users WHERE id = ?1 AND organization_id = ?2 LIMIT 1`,
+      )
+        .bind(targetUserId, ORGANIZATION_ID)
+        .first<{ id: string; email: string; display_name: string }>();
+
+      if (!targetUser) {
+        throw new HttpError(404, '해당 사용자를 찾을 수 없습니다.');
+      }
+
+      // 참조 확인 (audit_logs)
+      const auditRef = await runtime.DB.prepare(
+        `SELECT count(*) as count FROM audit_logs WHERE actor_user_id = ?1`,
+      )
+        .bind(targetUserId)
+        .first<{ count: number }>();
+
+      if (auditRef && auditRef.count > 0) {
+        // 감사 로그 참조가 남아 있으면 삭제하지 않고 status를 suspended로 변경
+        await runtime.DB.prepare(
+          `UPDATE users SET status = 'suspended', updated_at = ?2 WHERE id = ?1 AND organization_id = ?3`,
+        )
+          .bind(targetUserId, now, ORGANIZATION_ID)
+          .run();
+
+        await logAudit(
+          runtime,
+          actor.id,
+          'user.suspended_audit_retained',
+          'user',
+          targetUserId,
+          { email: targetUser.email, reason: 'has_audit_references' },
+          request,
+        );
+
+        return Response.json({
+          ok: true,
+          action: 'suspended',
+          message: '감사 로그 참조가 존재하여 계정을 정지(suspended) 처리했습니다.',
+        });
+      }
+
+      // 참조 없으면 완전 삭제
+      await runtime.DB.batch([
+        runtime.DB.prepare(
+          `DELETE FROM user_shop_roles WHERE user_id = ?1 AND organization_id = ?2`,
+        ).bind(targetUserId, ORGANIZATION_ID),
+        runtime.DB.prepare(
+          `DELETE FROM users WHERE id = ?1 AND organization_id = ?2`,
+        ).bind(targetUserId, ORGANIZATION_ID),
+      ]);
+
+      await logAudit(
+        runtime,
+        actor.id,
+        'user.deleted',
+        'user',
+        targetUserId,
+        { email: targetUser.email },
+        request,
+      );
+
+      return Response.json({ ok: true, action: 'deleted' });
+    }
 
     if (body.action === 'create_role') {
       if (!body.name || !body.permissions || !Array.isArray(body.permissions)) {

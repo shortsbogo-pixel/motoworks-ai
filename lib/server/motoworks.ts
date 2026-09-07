@@ -7,6 +7,9 @@ export type MotoworksEnv = {
   DATA_ENCRYPTION_KEY?: string;
   GEMINI_API_KEY?: string;
   GEMINI_VISION_MODEL?: string;
+  GEMINI_PLATE_MODEL?: string;
+  PLATE_HASH_SECRET?: string;
+  SESSION_SECRET?: string;
 };
 
 export type Permission =
@@ -109,49 +112,299 @@ export function getAllowedShops(
   return Array.from(allowed);
 }
 
+// ============================================================================
+// 보안 암호화 & 세션 토큰 유틸리티 (Web Crypto API 기반, Node/Workers 호환)
+// ============================================================================
+
+/**
+ * 상수 시간 바이트 배열 비교 (타이밍 공격 방지)
+ * W3C Web Cryptography API 명세에 제외되어 있으므로 비트 XOR 누적 방식으로 구현
+ */
+export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) {
+    mismatch |= a[i] ^ b[i];
+  }
+  return mismatch === 0;
+}
+
+/**
+ * 표준 PBKDF2-HMAC-SHA256 (100,000회 반복, 16바이트 솔트) 비밀번호 해싱
+ */
+export async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const passwordKey = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: 100000,
+      hash: 'SHA-256',
+    },
+    passwordKey,
+    256,
+  );
+  const saltHex = Array.from(salt, (b) => b.toString(16).padStart(2, '0')).join('');
+  const hashHex = Array.from(new Uint8Array(derivedBits), (b) => b.toString(16).padStart(2, '0')).join('');
+  return `pbkdf2:sha256:100000:${saltHex}:${hashHex}`;
+}
+
+/**
+ * PBKDF2 해시 검증 (상수 시간 비교 적용)
+ */
+export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  const parts = storedHash.split(':');
+  if (parts.length !== 5 || parts[0] !== 'pbkdf2' || parts[1] !== 'sha256') {
+    return false;
+  }
+  const iterations = parseInt(parts[2], 10);
+  const saltHex = parts[3];
+  const targetHashHex = parts[4];
+  if (isNaN(iterations) || !saltHex || !targetHashHex) {
+    return false;
+  }
+
+  const salt = new Uint8Array(saltHex.match(/.{1,2}/g)?.map((byte) => parseInt(byte, 16)) || []);
+  const targetBytes = new Uint8Array(targetHashHex.match(/.{1,2}/g)?.map((byte) => parseInt(byte, 16)) || []);
+
+  const passwordKey = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations,
+      hash: 'SHA-256',
+    },
+    passwordKey,
+    targetBytes.length * 8,
+  );
+  const derivedBytes = new Uint8Array(derivedBits);
+
+  return timingSafeEqual(derivedBytes, targetBytes);
+}
+
+export type SessionPayload = {
+  userId: string;
+  email: string;
+  iat: number;
+  exp: number;
+};
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64UrlDecode(str: string): Uint8Array {
+  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (base64.length % 4) base64 += '=';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function getHmacKey(secret: string): Promise<CryptoKey> {
+  return await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign', 'verify'],
+  );
+}
+
+/**
+ * HMAC-SHA256 기반 위조 방지 세션 토큰 생성 (기본 12시간 유효)
+ */
+export async function createSessionToken(
+  payload: { userId: string; email: string },
+  secret: string,
+  expiresInSeconds: number = 12 * 3600, // 12시간 (현장 교대 근무 보장)
+): Promise<string> {
+  const now = Date.now();
+  const fullPayload: SessionPayload = {
+    userId: payload.userId,
+    email: payload.email,
+    iat: now,
+    exp: now + expiresInSeconds * 1000,
+  };
+  const payloadBytes = new TextEncoder().encode(JSON.stringify(fullPayload));
+  const payloadPart = base64UrlEncode(payloadBytes);
+
+  const key = await getHmacKey(secret);
+  const sigBytes = new Uint8Array(
+    await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payloadPart)),
+  );
+  const sigPart = base64UrlEncode(sigBytes);
+
+  return `${payloadPart}.${sigPart}`;
+}
+
+/**
+ * HMAC-SHA256 세션 토큰 검증 (서명 불일치 또는 만료 시 null 반환)
+ */
+export async function verifySessionToken(
+  token: string,
+  secret: string,
+): Promise<SessionPayload | null> {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 2) return null;
+    const [payloadPart, sigPart] = parts;
+
+    const key = await getHmacKey(secret);
+    const expectedSig = new Uint8Array(
+      await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payloadPart)),
+    );
+    const providedSig = base64UrlDecode(sigPart);
+
+    if (!timingSafeEqual(expectedSig, providedSig)) {
+      return null;
+    }
+
+    const payloadJson = new TextDecoder().decode(base64UrlDecode(payloadPart));
+    const payload = JSON.parse(payloadJson) as SessionPayload;
+
+    if (!payload.userId || !payload.email || !payload.exp) {
+      return null;
+    }
+
+    if (Date.now() > payload.exp) {
+      return null;
+    }
+
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================================
+// 로그인 전용 무차별 대입 방지 Rate Limit (5회 실패 시 15분 차단)
+// ============================================================================
+
+export async function checkLoginRateLimit(
+  runtime: MotoworksEnv,
+  email: string,
+): Promise<{ allowed: boolean; retryAfterSeconds?: number; reason?: string }> {
+  const now = Date.now();
+  const key = `login:${email.toLowerCase()}`;
+
+  const row = await runtime.DB.prepare(
+    `SELECT consecutive_no_match, blocked_until FROM security_rate_limits WHERE key = ?1`,
+  )
+    .bind(key)
+    .first<{ consecutive_no_match: number; blocked_until: number }>();
+
+  if (row && row.blocked_until > now) {
+    const remainingSeconds = Math.ceil((row.blocked_until - now) / 1000);
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(remainingSeconds, 1),
+      reason: `연속된 로그인 실패(5회 이상)로 계정이 일시 잠금되었습니다. ${remainingSeconds}초 후 다시 시도하세요.`,
+    };
+  }
+
+  return { allowed: true };
+}
+
+export async function recordLoginFailure(
+  runtime: MotoworksEnv,
+  email: string,
+): Promise<{ consecutiveFailures: number; isBlocked: boolean }> {
+  const now = Date.now();
+  const cooldownPeriodMs = 15 * 60 * 1000; // 15분 차단
+  const blockedUntil = now + cooldownPeriodMs;
+  const key = `login:${email.toLowerCase()}`;
+
+  await runtime.DB.prepare(
+    `INSERT INTO security_rate_limits (key, request_count, window_start, consecutive_no_match, blocked_until, updated_at)
+     VALUES (?1, 1, ?2, 1, 0, ?2)
+     ON CONFLICT (key) DO UPDATE SET
+       consecutive_no_match = consecutive_no_match + 1,
+       blocked_until = CASE WHEN consecutive_no_match + 1 >= 5 THEN ?3 ELSE 0 END,
+       updated_at = ?2`,
+  )
+    .bind(key, now, blockedUntil)
+    .run();
+
+  const current = await runtime.DB.prepare(
+    `SELECT consecutive_no_match, blocked_until FROM security_rate_limits WHERE key = ?1`,
+  )
+    .bind(key)
+    .first<{ consecutive_no_match: number; blocked_until: number }>();
+
+  const failures = current?.consecutive_no_match ?? 1;
+  const isBlocked = (current?.blocked_until ?? 0) > now;
+  return { consecutiveFailures: failures, isBlocked };
+}
+
+export async function resetLoginFailure(
+  runtime: MotoworksEnv,
+  email: string,
+): Promise<void> {
+  const now = Date.now();
+  const key = `login:${email.toLowerCase()}`;
+
+  await runtime.DB.prepare(
+    `UPDATE security_rate_limits
+        SET consecutive_no_match = 0,
+            blocked_until = 0,
+            updated_at = ?1
+      WHERE key = ?2`,
+  )
+    .bind(now, key)
+    .run();
+}
+
+// ============================================================================
+// 사용자 인증 및 권한 검증 (헤더 우회 완전 차단, HMAC 세션 쿠키 필수)
+// ============================================================================
+
 export async function requireAuthorizedUser(
   request: Request,
   env: MotoworksEnv,
   shopId?: string,
 ): Promise<AuthorizedUser> {
-  let externalId = request.headers.get('oai-authenticated-user-id');
-  let email = request.headers.get('oai-authenticated-user-email')?.toLowerCase();
-  let displayName = decodeDisplayName(request);
-
-  // 로컬 개발 및 테스트 환경 지원 (개발 모드에서만 명시적 헤더 또는 기본값 허용)
-  const isDev = process.env.NODE_ENV !== 'production';
-  if ((!externalId || !email) && isDev) {
-    const devEmail = request.headers.get('x-motoworks-dev-email')?.toLowerCase();
-    const devId = request.headers.get('x-motoworks-dev-id');
-    const devName = request.headers.get('x-motoworks-dev-name');
-    if (devEmail) {
-      email = devEmail;
-      externalId = devId || `dev:${devEmail}`;
-      displayName = devName || devEmail;
-    } else {
-      // 로컬 개발 기본 시뮬레이션: 최초 관리자
-      const ownerEmail = (env.BOOTSTRAP_OWNER_EMAIL || 'shortsbogo@gmail.com').toLowerCase();
-      email = ownerEmail;
-      externalId = `owner:${ownerEmail}`;
-      displayName = '최초 관리자';
-    }
+  const cookieHeader = request.headers.get('cookie') || '';
+  const match = cookieHeader.match(/(?:^|;\s*)motoworks_session=([^;]+)/);
+  if (!match) {
+    throw new HttpError(401, '로그인이 필요합니다. 유효한 세션 쿠키가 제공되지 않았습니다.');
   }
 
-  if (!externalId || !email) throw new HttpError(401, '로그인이 필요합니다.');
-  const ownerEmail = (env.BOOTSTRAP_OWNER_EMAIL || 'shortsbogo@gmail.com').toLowerCase();
-  const isOwner = email === ownerEmail;
-  const id = `user:${externalId}`;
-  displayName = displayName || email;
+  const token = decodeURIComponent(match[1].trim());
+  const sessionSecret = env.SESSION_SECRET;
+  if (!sessionSecret) {
+    throw new HttpError(500, '서버에 SESSION_SECRET이 설정되지 않았습니다.');
+  }
 
-  // DB 기본 구조 및 사용자 시드 보장
-  await ensureBaseSeed(env, { id, externalId, email, displayName, isOwner });
+  const payload = await verifySessionToken(token, sessionSecret);
+  if (!payload) {
+    throw new HttpError(401, '세션이 만료되었거나 유효하지 않습니다. 다시 로그인해주세요.');
+  }
 
   const userRow = await env.DB.prepare(
-    `SELECT id, email, display_name, status FROM users WHERE external_user_id = ?1 AND organization_id = ?2 LIMIT 1`,
+    `SELECT id, external_user_id, email, display_name, status FROM users WHERE id = ?1 AND organization_id = ?2 LIMIT 1`,
   )
-    .bind(externalId, ORGANIZATION_ID)
+    .bind(payload.userId, ORGANIZATION_ID)
     .first<{
       id: string;
+      external_user_id: string;
       email: string;
       display_name: string | null;
       status: 'pending' | 'active' | 'suspended';
@@ -160,6 +413,16 @@ export async function requireAuthorizedUser(
   if (!userRow) {
     throw new HttpError(401, '등록되지 않은 사용자입니다.');
   }
+
+  if (userRow.status === 'pending') {
+    throw new HttpError(403, '계정 승인 대기 중입니다. 관리자의 승인이 필요합니다.');
+  }
+  if (userRow.status === 'suspended') {
+    throw new HttpError(403, '비활성화된 계정입니다.');
+  }
+
+  const ownerEmail = (env.BOOTSTRAP_OWNER_EMAIL || 'shortsbogo@gmail.com').toLowerCase();
+  const isOwner = userRow.email.toLowerCase() === ownerEmail;
 
   const roleRows = await env.DB.prepare(
     `SELECT usr.shop_id, usr.role, usr.role_id, r.permissions_json
@@ -196,7 +459,7 @@ export async function requireAuthorizedUser(
 
   const user: AuthorizedUser = {
     id: userRow.id,
-    externalId,
+    externalId: userRow.external_user_id,
     email: userRow.email,
     displayName: userRow.display_name || userRow.email,
     isOwner,
@@ -204,12 +467,6 @@ export async function requireAuthorizedUser(
     roles,
   };
 
-  if (user.status === 'pending') {
-    throw new HttpError(403, '계정 승인 대기 중입니다. 관리자의 승인이 필요합니다.');
-  }
-  if (user.status === 'suspended') {
-    throw new HttpError(403, '비활성화된 계정입니다.');
-  }
   if (shopId && !hasPermission(user, 'view', shopId)) {
     throw new HttpError(403, '이 센터에 대한 권한이 없습니다.');
   }
@@ -488,17 +745,221 @@ function base64ToBytes(value: string) {
   return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 }
 
-function decodeDisplayName(request: Request) {
-  if (
-    request.headers.get('oai-authenticated-user-full-name-encoding') !==
-    'percent-encoded-utf-8'
-  )
-    return null;
-  const value = request.headers.get('oai-authenticated-user-full-name');
-  if (!value) return null;
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return null;
+export function assertServerEnvironment(runtime: MotoworksEnv) {
+  const secret = runtime.PLATE_HASH_SECRET;
+  if (!secret || secret.trim().length < 16) {
+    console.error('[FATAL] PLATE_HASH_SECRET이 미설정되었거나 16자 미만입니다.');
+    throw new HttpError(
+      503,
+      '서버 보안 설정(PLATE_HASH_SECRET)이 누락되어 번호판 조회 서비스를 이용할 수 없습니다.',
+    );
+  }
+  const sessionSecret = runtime.SESSION_SECRET;
+  if (!sessionSecret || sessionSecret.trim().length < 16) {
+    console.error('[FATAL] SESSION_SECRET이 미설정되었거나 16자 미만입니다.');
+    throw new HttpError(
+      503,
+      '서버 보안 설정(SESSION_SECRET)이 누락되어 세션 인증을 진행할 수 없습니다.',
+    );
   }
 }
+
+export function extractPlateDigits(plate: string): string {
+  const cleaned = plate.replace(/[^\d]/g, '');
+  if (!cleaned) return '';
+  // 뒤에서부터 최대 4자리 (3자리 이하는 원형 보존)
+  return cleaned.length > 4 ? cleaned.slice(-4) : cleaned;
+}
+
+export async function hashPlateDigits(digits: string, secret: string): Promise<string> {
+  if (!secret) {
+    throw new Error('[FATAL] PLATE_HASH_SECRET이 누락되었습니다.');
+  }
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(digits));
+  return [...new Uint8Array(signature)]
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export async function checkPlateLookupRateLimit(
+  runtime: MotoworksEnv,
+  ip: string,
+  organizationId: string,
+): Promise<{ allowed: boolean; retryAfterSeconds?: number; reason?: string }> {
+  const now = Date.now();
+  const windowSizeMs = 60 * 1000; // 1분
+  const windowBoundary = now - windowSizeMs;
+  const keySource = `${ip}:${organizationId}`;
+  const key = await hashPii(keySource);
+
+  // 1. 잠금(blocked_until) 상태 확인
+  const existing = await runtime.DB.prepare(
+    `SELECT request_count, window_start, consecutive_no_match, blocked_until
+       FROM security_rate_limits
+      WHERE key = ?1`,
+  )
+    .bind(key)
+    .first<{
+      request_count: number;
+      window_start: number;
+      consecutive_no_match: number;
+      blocked_until: number;
+    }>();
+
+  if (existing && existing.blocked_until > now) {
+    const remainingSeconds = Math.ceil((existing.blocked_until - now) / 1000);
+    return {
+      allowed: false,
+      retryAfterSeconds: remainingSeconds,
+      reason: `연속 조회 실패(no_match) 5회 초과로 인해 15분간 조회가 일시 차단되었습니다. ${remainingSeconds}초 후 다시 시도하세요.`,
+    };
+  }
+
+  // 2. 단일 원자적 UPSERT 문으로 카운터 증가
+  await runtime.DB.prepare(
+    `INSERT INTO security_rate_limits
+       (key, request_count, window_start, consecutive_no_match, blocked_until, updated_at)
+     VALUES (?1, 1, ?2, 0, 0, ?2)
+     ON CONFLICT(key) DO UPDATE SET
+       request_count = CASE WHEN window_start < ?3 THEN 1 ELSE request_count + 1 END,
+       window_start = CASE WHEN window_start < ?3 THEN ?2 ELSE window_start END,
+       updated_at = ?2`,
+  )
+    .bind(key, now, windowBoundary)
+    .run();
+
+  // 3. 업데이트 후의 현재 request_count 조회 및 분당 20회 초과 여부 확인
+  const current = await runtime.DB.prepare(
+    `SELECT request_count, window_start
+       FROM security_rate_limits
+      WHERE key = ?1`,
+  )
+    .bind(key)
+    .first<{ request_count: number; window_start: number }>();
+
+  if (current && current.request_count > 20) {
+    const remainingSeconds = Math.ceil((current.window_start + windowSizeMs - now) / 1000);
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(remainingSeconds, 1),
+      reason: `번호판 조회 요청 한도(분당 20회)를 초과했습니다. ${remainingSeconds}초 후 다시 시도하세요.`,
+    };
+  }
+
+  // 4. 만료 행 누적 방지: 5% 확률로 1시간 이상 비활성된 만료 행 자동 정리 (Lazy Purge)
+  if (Math.random() < 0.05) {
+    void purgeExpiredRateLimits(runtime).catch(() => {});
+  }
+
+  return { allowed: true };
+}
+
+export async function purgeExpiredRateLimits(
+  runtime: MotoworksEnv,
+  olderThanMs: number = 3600 * 1000,
+): Promise<number> {
+  const now = Date.now();
+  const threshold = now - olderThanMs;
+  // 1시간 이상 갱신이 없고 현재 잠금 중이 아닌 만료 행 일괄 삭제
+  const result = await runtime.DB.prepare(
+    `DELETE FROM security_rate_limits
+      WHERE updated_at < ?1 AND blocked_until <= ?2`,
+  )
+    .bind(threshold, now)
+    .run();
+  return result.meta?.changes ?? 0;
+}
+
+export async function recordLookupNoMatch(
+  runtime: MotoworksEnv,
+  ip: string,
+  organizationId: string,
+): Promise<{ consecutiveNoMatch: number; isBlocked: boolean }> {
+  const now = Date.now();
+  const cooldownPeriodMs = 15 * 60 * 1000; // 15분 쿨다운
+  const blockedUntil = now + cooldownPeriodMs;
+  const keySource = `${ip}:${organizationId}`;
+  const key = await hashPii(keySource);
+
+  await runtime.DB.prepare(
+    `UPDATE security_rate_limits
+        SET consecutive_no_match = consecutive_no_match + 1,
+            blocked_until = CASE WHEN consecutive_no_match + 1 >= 5 THEN ?1 ELSE 0 END,
+            updated_at = ?2
+      WHERE key = ?3`,
+  )
+    .bind(blockedUntil, now, key)
+    .run();
+
+  const current = await runtime.DB.prepare(
+    `SELECT consecutive_no_match, blocked_until
+       FROM security_rate_limits
+      WHERE key = ?1`,
+  )
+    .bind(key)
+    .first<{ consecutive_no_match: number; blocked_until: number }>();
+
+  const consecutive = current?.consecutive_no_match ?? 1;
+  const isBlocked = (current?.blocked_until ?? 0) > now;
+  return { consecutiveNoMatch: consecutive, isBlocked };
+}
+
+export async function resetLookupNoMatch(
+  runtime: MotoworksEnv,
+  ip: string,
+  organizationId: string,
+): Promise<void> {
+  const now = Date.now();
+  const keySource = `${ip}:${organizationId}`;
+  const key = await hashPii(keySource);
+
+  await runtime.DB.prepare(
+    `UPDATE security_rate_limits
+        SET consecutive_no_match = 0,
+            updated_at = ?1
+      WHERE key = ?2`,
+  )
+    .bind(now, key)
+    .run();
+}
+
+export async function logSecurityAudit(
+  runtime: MotoworksEnv,
+  actorUserId: string,
+  action: string,
+  entityType: string,
+  entityId: string,
+  details: unknown,
+  request: Request,
+) {
+  try {
+    await runtime.DB.prepare(
+      `INSERT INTO audit_logs
+         (id, organization_id, shop_id, actor_user_id, action, entity_type, entity_id, after_json, user_agent, created_at)
+       VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+    )
+      .bind(
+        `audit:${crypto.randomUUID()}`,
+        ORGANIZATION_ID,
+        actorUserId,
+        action,
+        entityType,
+        entityId,
+        JSON.stringify(details),
+        request.headers.get('user-agent'),
+        Date.now(),
+      )
+      .run();
+  } catch (err) {
+    console.error('Security audit log failed:', err);
+  }
+}
+

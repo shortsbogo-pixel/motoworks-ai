@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   BadgeCheck,
   Bike,
+  BookOpen,
   Camera,
   Check,
   ChevronRight,
@@ -30,6 +31,7 @@ import {
   WalletCards,
   X,
 } from '@/components/icons';
+import { GuideView } from '@/components/guide-view';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,9 +46,10 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import {
   baselineReference,
-  recentOrders,
 } from '@/lib/mock-data';
 import { shouldHighlightField, type ReviewDocument } from '@/lib/domain';
+import { optimizeReceiptImage } from '@/lib/client/image-optimizer';
+import { LoginView, type UserProfile } from '@/components/login-view';
 
 export type DesignTheme = 'cockpit' | 'enterprise' | 'industrial';
 
@@ -74,6 +77,7 @@ type View =
   | 'processing'
   | 'review'
   | 'orders'
+  | 'guide'
   | 'customers'
   | 'rentals'
   | 'analytics'
@@ -94,6 +98,7 @@ const navGroups: Array<{
       { id: 'processing', label: 'AI 처리 상태', icon: Activity },
       { id: 'review', label: '검수 대기함', icon: ClipboardCheck },
       { id: 'orders', label: '정비내역', icon: ReceiptText },
+      { id: 'guide', label: '현장 실무 가이드', icon: BookOpen },
     ],
   },
   {
@@ -114,6 +119,10 @@ const titles: Record<View, { title: string; description: string }> = {
   dashboard: {
     title: '오늘의 대시보드',
     description: '승인된 데이터만 매출에 반영됩니다.',
+  },
+  guide: {
+    title: '현장 실무 테스트 5단계 가이드',
+    description: '스마트폰 영수증 촬영부터 AI 자동 판독, 0.5초 선별 검수, 고객 카카오 알림톡 명세서까지의 원스톱 실무 프로세스입니다.',
   },
   upload: {
     title: '사진 일괄 업로드',
@@ -282,7 +291,9 @@ export type RoleRecord = {
   createdAt: number;
 };
 
-export function AppShell({ userName }: { userName: string }) {
+export function AppShell({ userName: initialUserName }: { userName?: string }) {
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
   const [view, setView] = useState<View>('dashboard');
   const [documents, setDocuments] = useState<ReviewDocument[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
@@ -300,6 +311,8 @@ export function AppShell({ userName }: { userName: string }) {
     useState<ProcessingSummary | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notice, setNotice] = useState('');
+  const [isPlateModalOpen, setIsPlateModalOpen] = useState(false);
+  const [prefillPlate, setPrefillPlate] = useState('');
   const [designTheme, setDesignTheme] = useState<DesignTheme>('industrial');
   const isCockpit = designTheme === 'cockpit';
   const isEnterprise = designTheme === 'enterprise';
@@ -380,12 +393,63 @@ export function AppShell({ userName }: { userName: string }) {
   };
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      void refreshAllData();
-    }, 0);
-    return () => clearTimeout(timer);
+    let isMounted = true;
+    const checkAuth = async () => {
+      try {
+        const res = await fetch('/api/auth/me', { cache: 'no-store' });
+        if (res.ok) {
+          const data = (await res.json()) as { user: UserProfile };
+          if (isMounted) {
+            setCurrentUser(data.user);
+            void refreshAllData();
+          }
+        } else {
+          if (isMounted) setCurrentUser(null);
+        }
+      } catch {
+        if (isMounted) setCurrentUser(null);
+      } finally {
+        if (isMounted) setAuthChecking(false);
+      }
+    };
+    void checkAuth();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // ignore
+    }
+    setCurrentUser(null);
+  };
+
+  if (authChecking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#090d16] text-slate-100">
+        <div className="flex flex-col items-center gap-3">
+          <Spinner size="lg" />
+          <p className="text-sm font-mono text-slate-400">보안 세션 검증 중...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <LoginView
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+          void refreshAllData();
+        }}
+      />
+    );
+  }
+
+  const activeUserName = currentUser.displayName || currentUser.email || initialUserName || '대표 관리자';
 
   return (
     <DesignThemeContext.Provider
@@ -513,23 +577,35 @@ export function AppShell({ userName }: { userName: string }) {
               : 'border-slate-800/80 bg-slate-900/60 backdrop-blur-sm'
           }`}>
             <div className="flex items-center gap-3">
-              <div className={`grid h-9 w-9 place-items-center rounded-full text-sm font-black border ${
+              <div className={`grid h-9 w-9 place-items-center rounded-full text-sm font-black border shrink-0 ${
                 isEnterprise
                   ? 'bg-blue-100 text-blue-700 border-blue-200'
                   : isIndustrial
                     ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                     : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
               }`}>
-                김
+                {activeUserName[0]}
               </div>
               <div className="min-w-0 flex-1">
                 <p className={`truncate text-sm font-semibold ${isEnterprise ? 'text-slate-800' : 'text-slate-200'}`}>
-                  {userName}
+                  {activeUserName}
                 </p>
-                <p className={`text-xs ${isEnterprise ? 'text-slate-400' : 'text-slate-400'}`}>
-                  조직 관리자 · 전체 지점
+                <p className={`text-xs truncate ${isEnterprise ? 'text-slate-400' : 'text-slate-400'}`}>
+                  {currentUser?.isOwner ? '대표 관리자 · 전체 권한' : currentUser?.email || '조직 관리자'}
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                title="보안 로그아웃"
+                className={`rounded-lg px-2 py-1 text-xs font-semibold transition shrink-0 ${
+                  isEnterprise
+                    ? 'text-slate-500 hover:bg-slate-200 hover:text-rose-600'
+                    : 'text-slate-400 hover:bg-slate-800 hover:text-rose-400'
+                }`}
+              >
+                로그아웃
+              </button>
             </div>
           </div>
         </aside>
@@ -641,6 +717,20 @@ export function AppShell({ userName }: { userName: string }) {
               <ChevronRight size={14} className={isEnterprise ? 'text-slate-400' : 'text-slate-500'} />
             </div>
             <Button
+              type="button"
+              onClick={() => setIsPlateModalOpen(true)}
+              className={`min-h-11 rounded-xl font-bold px-3 sm:px-4 transition flex items-center gap-1.5 ${
+                isEnterprise
+                  ? 'border-2 border-blue-600 bg-white text-blue-700 hover:bg-blue-50 font-bold'
+                  : isIndustrial
+                    ? 'border-2 border-amber-500 bg-[#161d28] text-amber-400 hover:bg-amber-500/15 font-black'
+                    : 'border border-emerald-500/50 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+              }`}
+            >
+              <Camera size={17} />
+              <span>번호판 간편접수</span>
+            </Button>
+            <Button
               onClick={() => navigate('upload')}
               className={`min-h-11 rounded-xl font-black px-3 sm:px-4 transition ${
                 isEnterprise
@@ -683,12 +773,14 @@ export function AppShell({ userName }: { userName: string }) {
         <div className="p-3 sm:p-7 lg:p-10">
           {view === 'dashboard' && (
             <Dashboard
+              documents={documents}
               pending={pending}
               approvedCount={approvedToday.length}
               approvedRevenue={approvedRevenue}
               stats={dashboardStats}
               orders={orders}
               navigate={navigate}
+              onOpenPlateModal={() => setIsPlateModalOpen(true)}
             />
           )}
           {view === 'upload' && (
@@ -700,6 +792,7 @@ export function AppShell({ userName }: { userName: string }) {
               setSelectedId={setSelectedId}
               setProcessingSummary={setProcessingSummary}
               onUploaded={refreshAllData}
+              prefillPlate={prefillPlate}
             />
           )}
           {view === 'processing' && (
@@ -720,6 +813,13 @@ export function AppShell({ userName }: { userName: string }) {
             />
           )}
           {view === 'orders' && <Orders approved={approvedToday} orders={orders} />}
+          {view === 'guide' && (
+            <GuideView
+              navigate={navigate}
+              isEnterprise={isEnterprise}
+              isIndustrial={isIndustrial}
+            />
+          )}
           {view === 'customers' && <Customers customers={customers} />}
           {view === 'rentals' && <Rentals rentals={rentals} />}
           {view === 'analytics' && (
@@ -796,6 +896,43 @@ export function AppShell({ userName }: { userName: string }) {
             );
           })}
         </nav>
+
+        {/* 정비 현장 원터치 모바일 플로팅 셔터 버튼 (FAB) */}
+        {view !== 'upload' && (
+          <button
+            type="button"
+            onClick={() => navigate('upload')}
+            aria-label="현장 영수증 바로 촬영"
+            className={`fixed bottom-20 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-2xl transition duration-200 hover:scale-105 active:scale-95 lg:hidden ${
+              isEnterprise
+                ? 'bg-blue-600 text-white shadow-blue-500/30'
+                : isIndustrial
+                  ? 'bg-[#F59E0B] text-slate-950 shadow-amber-500/40 border-2 border-amber-600'
+                  : 'bg-emerald-500 text-slate-950 glow-emerald border border-emerald-400'
+            }`}
+          >
+            <Camera size={26} strokeWidth={2.5} />
+          </button>
+        )}
+
+        {isPlateModalOpen && (
+          <PlateLookupModal
+            isOpen={isPlateModalOpen}
+            onClose={() => setIsPlateModalOpen(false)}
+            onNewRegistration={(plate) => {
+              setIsPlateModalOpen(false);
+              setPrefillPlate(plate);
+              navigate('upload');
+              setNotice(`판독된 번호판 [${plate}]이(가) 신규 접수 폼에 자동 지정되었습니다.`);
+            }}
+            onSelectCustomer={(candidate) => {
+              setIsPlateModalOpen(false);
+              setPrefillPlate(candidate.fullPlate);
+              navigate('upload');
+              setNotice(`기존 고객 [${candidate.customerName} - ${candidate.model}]의 정비 접수가 시작되었습니다.`);
+            }}
+          />
+        )}
       </main>
     </div>
     </DesignThemeContext.Provider>
@@ -803,19 +940,23 @@ export function AppShell({ userName }: { userName: string }) {
 }
 
 function Dashboard({
+  documents = [],
   pending,
   approvedCount,
   approvedRevenue,
   stats,
   orders,
   navigate,
+  onOpenPlateModal,
 }: {
+  documents?: ReviewDocument[];
   pending: number;
   approvedCount: number;
   approvedRevenue: number;
   stats: DashboardStats | null;
   orders: OrderRecord[];
   navigate: (view: View) => void;
+  onOpenPlateModal?: () => void;
 }) {
   const { isIndustrial, isEnterprise } = useDesignTheme();
   const effectivePending = stats ? stats.pendingReviewCount : pending;
@@ -831,10 +972,88 @@ function Dashboard({
         amount: o.totalAmount,
         status: 'DB 승인완료',
       }))
-    : recentOrders;
+    : [];
 
   return (
-    <div className="space-y-7">
+    <div className="space-y-6">
+      {/* 번호판 OCR 간편 접수 배너 */}
+      <div
+        onClick={() => onOpenPlateModal?.()}
+        className={`cursor-pointer rounded-xl border p-4 transition-all hover:scale-[1.005] flex items-center justify-between gap-4 ${
+          isEnterprise
+            ? 'border-blue-300 bg-gradient-to-r from-blue-50 to-indigo-50/50 hover:bg-blue-50 shadow-xs'
+            : isIndustrial
+              ? 'border-2 border-amber-500/70 bg-gradient-to-r from-[#1b2332] to-[#141a24] hover:border-amber-500 shadow-md'
+              : 'border border-emerald-500/40 bg-gradient-to-r from-emerald-950/40 to-slate-900 hover:border-emerald-500/60'
+        }`}
+      >
+        <div className="flex items-center gap-3.5">
+          <div className={`p-2.5 rounded-xl shrink-0 ${
+            isEnterprise
+              ? 'bg-blue-600 text-white shadow-sm'
+              : isIndustrial
+                ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                : 'bg-emerald-500 text-slate-950 glow-emerald font-bold'
+          }`}>
+            <Camera size={22} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <p className={`font-black text-base ${isEnterprise ? 'text-blue-950' : 'text-amber-400'}`}>
+                번호판 OCR 간편 접수
+              </p>
+              <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                타이핑 제로
+              </span>
+            </div>
+            <p className={`text-xs mt-0.5 ${isEnterprise ? 'text-slate-600' : 'text-slate-300'}`}>
+              입고 오토바이 번호판만 찰칵 찍으면 번호 자동 입력 및 기존 고객 정비 이력을 1초 만에 확인합니다.
+            </p>
+          </div>
+        </div>
+        <Button
+          type="button"
+          className={`shrink-0 rounded-xl font-bold text-xs px-4 py-2 ${
+            isEnterprise
+              ? 'bg-blue-600 text-white shadow-sm'
+              : isIndustrial
+                ? 'bg-amber-500 text-slate-950 font-black shadow-sm'
+                : 'bg-emerald-500 text-slate-950'
+          }`}
+        >
+          바로 촬영
+        </Button>
+      </div>
+
+      {/* 현장 실무 가이드 퀵 바로가기 배너 */}
+      <div
+        onClick={() => navigate('guide')}
+        className={`cursor-pointer rounded-xl border p-3.5 sm:p-4 transition-all hover:scale-[1.005] flex items-center justify-between gap-4 ${
+          isEnterprise
+            ? 'border-blue-200 bg-blue-50/60 hover:bg-blue-50'
+            : isIndustrial
+              ? 'border-slate-800 bg-[#161d28] hover:border-amber-500/50'
+              : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <div className={`p-2 rounded-lg shrink-0 ${isEnterprise ? 'bg-blue-100 text-blue-700' : 'bg-amber-500/20 text-amber-300'}`}>
+            <BookOpen size={20} />
+          </div>
+          <div>
+            <p className={`font-bold text-sm ${isEnterprise ? 'text-slate-900' : 'text-slate-100'}`}>
+              현장 실무 테스트 5단계 순서 가이드
+            </p>
+            <p className="text-xs text-slate-400 hidden sm:block">
+              스마트폰 촬영부터 Gemini 3.8 AI 판독, 0.5초 검수 승인, 알림톡 명세서 발송까지 한눈에 확인하세요.
+            </p>
+          </div>
+        </div>
+        <div className={`flex items-center gap-1 font-extrabold text-xs shrink-0 ${isEnterprise ? 'text-blue-600' : 'text-amber-400'}`}>
+          가이드 보기 <ChevronRight size={16} />
+        </div>
+      </div>
+
       <section className="grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-4">
         <Metric
           label="검수 대기"
@@ -891,25 +1110,33 @@ function Dashboard({
             {[
               [
                 '매장 미확정',
-                4,
+                documents.filter(
+                  (d) =>
+                    d.status === 'pending' &&
+                    (d.shopCertainty === 'unknown' || !d.shopName || d.shopName === '미확인'),
+                ).length,
                 '사진의 지점 표시가 없거나 흐립니다.',
                 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
               ],
               [
                 '차종 후보',
-                4,
+                documents.filter(
+                  (d) =>
+                    d.status === 'pending' &&
+                    d.fields?.some((f) => f.key === 'vehicle_model' && f.validationStatus === 'review'),
+                ).length,
                 '배기량 또는 연식을 확정할 수 없습니다.',
                 'bg-sky-500/15 text-sky-400 border border-sky-500/30',
               ],
               [
                 '0원 정비',
-                2,
+                documents.filter((d) => d.status === 'pending' && d.amount === 0).length,
                 '렌트 정비 여부를 확인해야 합니다.',
                 'bg-rose-500/15 text-rose-400 border border-rose-500/30',
               ],
               [
                 '중복 후보',
-                1,
+                documents.filter((d) => d.status === 'pending' && d.duplicateCandidate).length,
                 '원본 해시와 작업 항목이 유사합니다.',
                 'bg-purple-500/15 text-purple-400 border border-purple-500/30',
               ],
@@ -943,7 +1170,9 @@ function Dashboard({
             isEnterprise || isIndustrial ? 'border-slate-200' : 'border-slate-800'
           }`}>
             <p className="eyebrow">기존 데이터</p>
-            <h2 className="section-title">재검증 대기</h2>
+            <h2 className="section-title">
+              {baselineReference.serviceOrders > 0 ? '재검증 대기' : '기준 엑셀 연결 대기 (0건)'}
+            </h2>
           </div>
           <div className="p-5 sm:p-6">
             <div className={`mb-5 flex items-start gap-3 rounded-xl border p-4 ${
@@ -956,8 +1185,9 @@ function Dashboard({
                 size={19}
               />
               <p className="text-sm leading-6">
-                원본 엑셀이 전달되지 않아 아래 값은 사용자 제공 기준값입니다.
-                매출로 확정하지 않았습니다.
+                {baselineReference.serviceOrders > 0
+                  ? '원본 엑셀이 전달되지 않아 아래 값은 사용자 제공 기준값입니다. 매출로 확정하지 않았습니다.'
+                  : '등록된 과거 엑셀 데이터가 없습니다. 원본 엑셀 파일을 연결하면 과거 기준값과 비교 분석됩니다.'}
               </p>
             </div>
             <dl className="space-y-3">
@@ -998,7 +1228,7 @@ function Dashboard({
           <div>
             <p className="eyebrow">최근 기록</p>
             <h2 className="section-title">
-              승인된 정비 {orders.length > 0 ? `(${orders.length}건 DB 영구저장됨)` : '(참조 예시)'}
+              승인된 정비 {orders.length > 0 ? `(${orders.length}건)` : '(0건)'}
             </h2>
           </div>
           <Button
@@ -1110,6 +1340,7 @@ function Upload({
   setSelectedId,
   setProcessingSummary,
   onUploaded,
+  prefillPlate,
 }: {
   documents: ReviewDocument[];
   setDocuments: (value: ReviewDocument[]) => void;
@@ -1118,7 +1349,9 @@ function Upload({
   setSelectedId: (value: string) => void;
   setProcessingSummary: (value: ProcessingSummary) => void;
   onUploaded?: () => void;
+  prefillPlate?: string;
 }) {
+  const { isIndustrial, isEnterprise, isCockpit } = useDesignTheme();
   const inputRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
@@ -1131,7 +1364,13 @@ function Upload({
     try {
       const form = new FormData();
       form.set('shopId', shopId);
-      files.forEach((file) => form.append('files', file));
+      if (prefillPlate) {
+        form.set('prefillPlate', prefillPlate);
+      }
+      const optimizedFiles = await Promise.all(
+        files.map((file) => optimizeReceiptImage(file)),
+      );
+      optimizedFiles.forEach((file) => form.append('files', file));
       const response = await fetch('/api/extractions', {
         method: 'POST',
         body: form,
@@ -1164,6 +1403,22 @@ function Upload({
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
       <section className="panel p-4 sm:p-8">
+        {prefillPlate && (
+          <div className="mb-5 flex items-center justify-between rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 sm:p-4 text-amber-300">
+            <div className="flex items-center gap-2.5">
+              <Camera size={19} className="text-amber-400 shrink-0" />
+              <div>
+                <p className="text-xs font-semibold text-amber-400">번호판 간편 접수 연동 활성화</p>
+                <p className="text-sm font-black font-mono tracking-tight text-white sm:text-base">
+                  차량 번호판: {prefillPlate}
+                </p>
+              </div>
+            </div>
+            <span className="rounded bg-amber-500/20 px-2 py-1 text-[11px] font-mono text-amber-300 font-bold border border-amber-500/30">
+              신규 영수증과 자동 연동
+            </span>
+          </div>
+        )}
         <div className="mb-5 grid gap-2 sm:grid-cols-[160px_1fr] sm:items-center">
           <label className="text-sm font-extrabold" htmlFor="work-shop-select">
             실제 작업센터
@@ -1186,34 +1441,68 @@ function Upload({
         </div>
         <div
           aria-label="정비내역서 사진 선택"
-          className="group grid min-h-[280px] w-full place-items-center rounded-2xl border-2 border-dashed border-[#9ecbc1] bg-[#f3fbf9] p-5 text-center transition hover:border-[#1c9f88] hover:bg-[#ecfaf6] sm:min-h-[360px] sm:p-8"
+          className={`group relative grid min-h-[280px] w-full place-items-center rounded-2xl border-2 border-dashed p-5 text-center transition sm:min-h-[360px] sm:p-8 ${
+            isEnterprise
+              ? 'border-slate-300 bg-slate-50/70 hover:border-blue-500 hover:bg-blue-50/40'
+              : isIndustrial
+                ? 'border-slate-300 bg-[#edf0f5] hover:border-amber-500 hover:bg-amber-50/30'
+                : 'border-slate-800 bg-slate-900/50 hover:border-emerald-500 hover:bg-emerald-500/5'
+          }`}
         >
+          {/* 현장 촬영 뷰파인더 모서리 가이드 (HUD) */}
+          <div className="pointer-events-none absolute inset-4 border border-dashed border-slate-500/20 rounded-xl">
+            <div className="absolute left-0 top-0 h-4 w-4 border-l-2 border-t-2 border-amber-500/70" />
+            <div className="absolute right-0 top-0 h-4 w-4 border-r-2 border-t-2 border-amber-500/70" />
+            <div className="absolute bottom-0 left-0 h-4 w-4 border-b-2 border-l-2 border-amber-500/70" />
+            <div className="absolute bottom-0 right-0 h-4 w-4 border-b-2 border-r-2 border-amber-500/70" />
+          </div>
+
           <div>
-            <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-[#d9f6ee] text-[#0b7865]">
-              <CloudUpload size={30} />
+            <div className={`mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl transition ${
+              isEnterprise
+                ? 'bg-blue-100 text-blue-700'
+                : isIndustrial
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 glow-box-emerald'
+            }`}>
+              <Camera size={32} />
             </div>
-            <h2 className="text-xl font-extrabold">
-              정비내역서 사진을 선택하세요
+            <h2 className={`text-xl font-extrabold ${
+              isEnterprise || isIndustrial ? 'text-slate-900' : 'text-slate-100'
+            }`}>
+              정비내역서 사진을 촬영하거나 선택하세요
             </h2>
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#617873]">
-              JPG, PNG, HEIC를 여러 장 선택할 수 있습니다. 원본은 비공개로
-              보존하고 보정본을 별도로 만듭니다.
+            <p className={`mx-auto mt-2 max-w-md text-sm leading-6 ${
+              isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-400'
+            }`}>
+              스마트폰 카메라로 정면에서 영수증 모서리가 보이게 찍어주세요.<br />
+              고화질 사진은 1초 내로 자동 압축 및 회전 보정되어 전송됩니다.
             </p>
             <div className="mt-5 grid gap-2 sm:flex sm:justify-center">
               <Button
                 type="button"
                 onClick={() => cameraRef.current?.click()}
-                className="min-h-12 rounded-xl bg-[#0d6d5d] px-5"
+                className={`min-h-12 rounded-xl px-6 font-bold transition ${
+                  isEnterprise
+                    ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm'
+                    : isIndustrial
+                      ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black shadow-md'
+                      : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 glow-emerald font-bold'
+                }`}
               >
-                <Camera size={18} /> 바로 촬영
+                <Camera size={19} /> 모바일 바로 촬영
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => inputRef.current?.click()}
-                className="min-h-12 rounded-xl border-[#9ecbc1] bg-white px-5"
+                className={`min-h-12 rounded-xl px-5 font-bold transition ${
+                  isEnterprise || isIndustrial
+                    ? 'border-slate-300 bg-white text-slate-800 hover:bg-slate-50'
+                    : 'border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800'
+                }`}
               >
-                <CloudUpload size={18} /> 사진 여러 장 선택
+                <CloudUpload size={18} /> 앨범에서 여러 장 선택
               </Button>
             </div>
           </div>
@@ -2051,20 +2340,14 @@ function Orders({
         amount: o.totalAmount,
         status: 'DB 승인완료',
       }))
-    : [
-        ...approved.map((d) => ({
-          id: d.id,
-          customer: d.customerName,
-          vehicle: d.vehicleLabel,
-          shop: d.shopName,
-          amount: d.amount,
-          status: '오늘 승인 (임시)',
-        })),
-        ...recentOrders.map((r) => ({
-          ...r,
-          status: `${r.status} (참조 예시)`,
-        })),
-      ];
+    : approved.map((d) => ({
+        id: d.id,
+        customer: d.customerName,
+        vehicle: d.vehicleLabel,
+        shop: d.shopName,
+        amount: d.amount,
+        status: '오늘 승인',
+      }));
 
   const paymentBreakdown = {
     card: 0,
@@ -2499,7 +2782,7 @@ function Analytics({
         <Metric
           label="참조 기준 매출"
           value={won.format(baselineReference.revenue)}
-          note="과거 엑셀 기준값"
+          note={baselineReference.revenue > 0 ? "과거 엑셀 기준값" : "과거 엑셀 미연결 (0원)"}
           icon={Database}
           tone="amber"
         />
@@ -2514,7 +2797,11 @@ function Analytics({
       <section className="panel p-5 sm:p-7">
         <p className="eyebrow">지점별 현황</p>
         <h2 className="section-title mb-7">
-          {stats?.shops && stats.shops.length > 0 ? '실시간 DB 지점별 매출 현황' : '사용자 제공 기준값'}
+          {stats?.shops && stats.shops.length > 0
+            ? '실시간 DB 지점별 매출 현황'
+            : baselineReference.revenue > 0
+              ? '사용자 제공 기준값'
+              : '지점별 매출 현황 (등록 대기 0건)'}
         </h2>
         <div className="space-y-7">
           {liveShops.map((shop) => (
@@ -2752,6 +3039,98 @@ function UsersView({
   const [creating, setCreating] = useState(false);
   const [actionNotice, setActionNotice] = useState('');
 
+  // 신규 사용자 추가 모달 상태
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [formEmail, setFormEmail] = useState('');
+  const [formDisplayName, setFormDisplayName] = useState('');
+  const [formRole, setFormRole] = useState<'admin' | 'shop_manager' | 'staff' | 'viewer'>('staff');
+  const [formShopId, setFormShopId] = useState<string>('');
+  const [formPassword, setFormPassword] = useState('');
+  const [formConfirmPassword, setFormConfirmPassword] = useState('');
+  const [formSubmitting, setFormSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const resetForm = () => {
+    setFormEmail('');
+    setFormDisplayName('');
+    setFormRole('staff');
+    setFormShopId('');
+    setFormPassword('');
+    setFormConfirmPassword('');
+    setFormError('');
+  };
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formEmail.trim() || !formDisplayName.trim() || !formPassword) {
+      setFormError('이메일, 표시 이름, 초기 비밀번호를 모두 입력해주세요.');
+      return;
+    }
+    if (formPassword.length < 8) {
+      setFormError('비밀번호는 최소 8자 이상이어야 합니다.');
+      return;
+    }
+    if (formPassword !== formConfirmPassword) {
+      setFormError('비밀번호와 비밀번호 확인이 일치하지 않습니다.');
+      return;
+    }
+
+    setFormSubmitting(true);
+    setFormError('');
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create_user',
+          email: formEmail.trim().toLowerCase(),
+          displayName: formDisplayName.trim(),
+          role: formRole,
+          shopId: formRole === 'admin' ? null : (formShopId || null),
+          initialPassword: formPassword,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || '계정 생성에 실패했습니다.');
+      }
+
+      setIsCreateModalOpen(false);
+      setActionNotice(`신규 계정 '${formDisplayName}' (${formEmail})이(가) 성공적으로 생성되었습니다.`);
+      resetForm();
+      onRefresh?.();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : '계정 생성 실패');
+    } finally {
+      setFormSubmitting(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string, email: string) => {
+    if (!confirm(`정말로 '${email}' 계정을 삭제하시겠습니까?`)) return;
+    setUpdatingId(userId);
+    setActionNotice('');
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete_user',
+          userId,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '삭제 처리에 실패했습니다.');
+      setActionNotice(data.message || `'${email}' 계정이 삭제되었습니다.`);
+      onRefresh?.();
+    } catch (err) {
+      setActionNotice(err instanceof Error ? err.message : '삭제 처리 실패');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
   const allAvailablePerms = [
     { key: 'view', label: '기본 조회' },
     { key: 'upload', label: '사진 업로드' },
@@ -2847,45 +3226,226 @@ function UsersView({
       )}
       <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
         <section className="panel overflow-hidden">
-          <PanelTitle eyebrow="사용자 계정" title={`등록 사용자 및 지점 권한 (${displayUsers.length}명)`} />
-          {displayUsers.map((user) => (
-            <div
-              key={user.id}
-              className="flex flex-wrap items-center gap-4 border-t border-[#e5eeec] p-5"
-            >
-              <div className="grid h-10 w-10 place-items-center rounded-full bg-[#e1f5f0] font-black text-[#0c705e]">
-                {user.displayName[0] || '사'}
-              </div>
-              <div className="min-w-[180px] flex-1">
-                <div className="flex items-center gap-2">
-                  <p className="font-bold">{user.displayName}</p>
-                  <Badge
-                    variant={user.status === 'active' ? 'default' : user.status === 'pending' ? 'outline' : 'secondary'}
-                    className={user.status === 'active' ? 'bg-[#0d6d5d]' : user.status === 'pending' ? 'border-[#e69824] text-[#b06a00]' : ''}
-                  >
-                    {user.status === 'active' ? '승인 완료' : user.status === 'pending' ? '승인 대기' : '정지'}
-                  </Badge>
-                </div>
-                <p className="text-xs text-[#758782]">{user.email}</p>
-                {user.assignments.map((asgn) => (
-                  <p key={asgn.id} className="mt-1 text-xs text-[#0e7462]">
-                    • {asgn.shopName} · {asgn.roleName || asgn.role}
-                  </p>
-                ))}
-              </div>
-              {user.status === 'pending' && (
-                <Button
-                  size="sm"
-                  className="rounded-lg bg-[#0d6d5d] text-xs font-bold text-white hover:bg-[#09594c]"
-                  disabled={updatingId === user.id}
-                  onClick={() => handleUpdateStatus(user.id, 'active')}
-                >
-                  {updatingId === user.id ? '처리 중...' : '승인 및 활성화'}
-                </Button>
-              )}
+          <div className="flex items-center justify-between p-5 pb-3">
+            <div>
+              <p className="eyebrow">사용자 계정</p>
+              <h2 className="section-title">등록 사용자 및 지점 권한 ({displayUsers.length}명)</h2>
             </div>
-          ))}
+            <Button
+              type="button"
+              onClick={() => setIsCreateModalOpen(true)}
+              className="rounded-xl bg-[#0d6d5d] text-xs font-bold text-white hover:bg-[#09594c] flex items-center gap-1.5 shadow-sm px-3.5 py-2"
+            >
+              <Users size={16} />
+              <span>사용자 추가</span>
+            </Button>
+          </div>
+          {displayUsers.map((user) => {
+            const isOwnerAccount = user.email.toLowerCase() === 'shortsbogo@gmail.com';
+            return (
+              <div
+                key={user.id}
+                className="flex flex-wrap items-center gap-4 border-t border-[#e5eeec] p-5"
+              >
+                <div className="grid h-10 w-10 place-items-center rounded-full bg-[#e1f5f0] font-black text-[#0c705e]">
+                  {user.displayName[0] || '사'}
+                </div>
+                <div className="min-w-[180px] flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold">{user.displayName}</p>
+                    <Badge
+                      variant={user.status === 'active' ? 'default' : user.status === 'pending' ? 'outline' : 'secondary'}
+                      className={user.status === 'active' ? 'bg-[#0d6d5d]' : user.status === 'pending' ? 'border-[#e69824] text-[#b06a00]' : ''}
+                    >
+                      {user.status === 'active' ? '승인 완료' : user.status === 'pending' ? '승인 대기' : '정지'}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-[#758782]">{user.email}</p>
+                  {user.assignments.map((asgn) => (
+                    <p key={asgn.id} className="mt-1 text-xs text-[#0e7462]">
+                      • {asgn.shopName} · {asgn.roleName || asgn.role}
+                    </p>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  {user.status === 'pending' && (
+                    <Button
+                      size="sm"
+                      className="rounded-lg bg-[#0d6d5d] text-xs font-bold text-white hover:bg-[#09594c]"
+                      disabled={updatingId === user.id}
+                      onClick={() => handleUpdateStatus(user.id, 'active')}
+                    >
+                      {updatingId === user.id ? '처리 중...' : '승인 및 활성화'}
+                    </Button>
+                  )}
+                  {!isOwnerAccount && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-xs text-rose-500 hover:bg-rose-50 hover:text-rose-700"
+                      disabled={updatingId === user.id}
+                      onClick={() => handleDeleteUser(user.id, user.email)}
+                    >
+                      삭제
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </section>
+
+        {/* 신규 사용자 추가 모달 */}
+        {isCreateModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+            <div className="w-full max-w-lg rounded-2xl border border-slate-700 bg-[#161d28] p-6 shadow-2xl text-slate-100 space-y-5">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-amber-500 text-slate-950 font-bold">
+                    <Users size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">신규 사용자 계정 추가</h3>
+                    <p className="text-xs text-slate-400">시스템 접근 권한 및 초기 비밀번호 설정</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setIsCreateModalOpen(false); resetForm(); }}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {formError && (
+                <div className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/15 p-3 text-xs text-rose-200">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0 text-rose-400" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleCreateUser} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                    이메일 (로그인 ID) *
+                  </label>
+                  <Input
+                    type="email"
+                    required
+                    placeholder="user@corepartners.kr"
+                    value={formEmail}
+                    onChange={(e) => setFormEmail(e.target.value)}
+                    className="mt-1 h-10 border-slate-700 bg-slate-900/80 text-white placeholder-slate-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                    표시 이름 (성명/직책) *
+                  </label>
+                  <Input
+                    type="text"
+                    required
+                    placeholder="홍길동 실장"
+                    value={formDisplayName}
+                    onChange={(e) => setFormDisplayName(e.target.value)}
+                    className="mt-1 h-10 border-slate-700 bg-slate-900/80 text-white placeholder-slate-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                      역할 (권한 그룹) *
+                    </label>
+                    <select
+                      value={formRole}
+                      onChange={(e) => setFormRole(e.target.value as any)}
+                      className="mt-1 h-10 w-full rounded-md border border-slate-700 bg-slate-900/80 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    >
+                      <option value="staff">직원 (staff)</option>
+                      <option value="shop_manager">지점 관리자 (shop_manager)</option>
+                      <option value="viewer">열람자 (viewer)</option>
+                      <option value="admin">조직 관리자 (admin)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                      소속 센터 (지점)
+                    </label>
+                    <select
+                      value={formShopId}
+                      disabled={formRole === 'admin'}
+                      onChange={(e) => setFormShopId(e.target.value)}
+                      className="mt-1 h-10 w-full rounded-md border border-slate-700 bg-slate-900/80 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
+                    >
+                      <option value="">전체 지점 (기본)</option>
+                      <option value="yongjeon">진바이크 용전센터</option>
+                      <option value="jayang">코아바이크 자양센터</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 border-t border-slate-800/80 pt-3">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                      초기 비밀번호 (8자 이상) *
+                    </label>
+                    <Input
+                      type="password"
+                      required
+                      placeholder="••••••••"
+                      value={formPassword}
+                      onChange={(e) => setFormPassword(e.target.value)}
+                      className="mt-1 h-10 border-slate-700 bg-slate-900/80 text-white placeholder-slate-500 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                      비밀번호 확인 *
+                    </label>
+                    <Input
+                      type="password"
+                      required
+                      placeholder="••••••••"
+                      value={formConfirmPassword}
+                      onChange={(e) => setFormConfirmPassword(e.target.value)}
+                      className="mt-1 h-10 border-slate-700 bg-slate-900/80 text-white placeholder-slate-500 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-800">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => { setIsCreateModalOpen(false); resetForm(); }}
+                    className="text-slate-400 hover:text-white"
+                  >
+                    취소
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={formSubmitting}
+                    className="bg-amber-500 font-bold text-slate-950 hover:bg-amber-400"
+                  >
+                    {formSubmitting ? (
+                      <div className="flex items-center gap-1.5">
+                        <Spinner size="sm" />
+                        <span>생성 중...</span>
+                      </div>
+                    ) : (
+                      '계정 등록 완료'
+                    )}
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
         <aside className="panel p-5">
           <p className="eyebrow">개인정보 및 보안 원칙</p>
           <h2 className="section-title">RBAC 엄격 격리</h2>
@@ -3191,3 +3751,644 @@ function EmptyState({ title, text }: { title: string; text: string }) {
     </div>
   );
 }
+
+interface PlateCandidate {
+  vehicleId: string;
+  fullPlate: string;
+  manufacturer?: string | null;
+  model: string;
+  shopName?: string | null;
+  customerId?: string | null;
+  customerName: string;
+  phone: string;
+  lastServiceDate?: string | null;
+  recentOrders?: Array<{
+    id: string;
+    approved_service_date: string;
+    service_type: string;
+    total_amount: number;
+  }>;
+  isFallback?: boolean;
+}
+
+interface PlateLookupResponse {
+  status: 'no_match' | 'single_match' | 'multiple_matches';
+  matchType?: 'exact_4' | 'fallback_3' | 'none';
+  isFallback?: boolean;
+  candidate?: PlateCandidate;
+  candidates?: PlateCandidate[];
+  extractedPlate?: string;
+  plateDigits?: string;
+  confidence?: number;
+  isUncertain?: boolean;
+  notice?: string;
+  error?: string;
+  retryAfter?: number;
+}
+
+function PlateLookupModal({
+  isOpen,
+  onClose,
+  onNewRegistration,
+  onSelectCustomer,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onNewRegistration: (plate: string) => void;
+  onSelectCustomer: (candidate: PlateCandidate) => void;
+}) {
+  const { isIndustrial, isEnterprise } = useDesignTheme();
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [plateInput, setPlateInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [confidence, setConfidence] = useState<number | null>(null);
+  const [isUncertain, setIsUncertain] = useState(false);
+  const [result, setResult] = useState<PlateLookupResponse | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+    };
+  }, [imagePreview]);
+
+  const handleImageSelected = async (file: File) => {
+    setImageFile(file);
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    const url = URL.createObjectURL(file);
+    setImagePreview(url);
+    setLoading(true);
+    setErrorMessage(null);
+    setResult(null);
+
+    try {
+      const optimizedFile = await optimizeReceiptImage(file);
+      const formData = new FormData();
+      formData.append('image', optimizedFile);
+
+      const res = await fetch('/api/vehicles/lookup-plate', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = (await res.json()) as PlateLookupResponse;
+
+      if (!res.ok) {
+        if (res.status === 429) {
+          setErrorMessage(
+            data.error || '요청 횟수 제한 또는 연속 조회 실패로 인해 15분간 조회가 차단되었습니다.',
+          );
+        } else if (res.status === 503) {
+          setErrorMessage(data.error || '서버 보안 설정(PLATE_HASH_SECRET)이 누락되었습니다.');
+        } else {
+          setErrorMessage(data.error || '번호판 인식 및 조회에 실패했습니다.');
+        }
+        return;
+      }
+
+      setResult(data);
+      if (data.extractedPlate) {
+        setPlateInput(data.extractedPlate);
+      }
+      setConfidence(data.confidence ?? null);
+      setIsUncertain(Boolean(data.isUncertain));
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? err.message : '네트워크 오류가 발생했습니다.',
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTextLookup = async () => {
+    if (!plateInput.trim()) return;
+    setLoading(true);
+    setErrorMessage(null);
+    setResult(null);
+
+    try {
+      const res = await fetch('/api/vehicles/lookup-plate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plateText: plateInput.trim() }),
+      });
+
+      const data = (await res.json()) as PlateLookupResponse;
+
+      if (!res.ok) {
+        if (res.status === 429) {
+          setErrorMessage(
+            data.error || '요청 횟수 제한 또는 연속 조회 실패로 인해 15분간 조회가 차단되었습니다.',
+          );
+        } else if (res.status === 503) {
+          setErrorMessage(data.error || '서버 보안 설정(PLATE_HASH_SECRET)이 누락되었습니다.');
+        } else {
+          setErrorMessage(data.error || '번호판 조회에 실패했습니다.');
+        }
+        return;
+      }
+
+      setResult(data);
+      if (data.extractedPlate) {
+        setPlateInput(data.extractedPlate);
+      }
+      setConfidence(data.confidence ?? null);
+      setIsUncertain(Boolean(data.isUncertain));
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? err.message : '네트워크 오류가 발생했습니다.',
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  const digitsOnly = plateInput.replace(/[^0-9]/g, '');
+  const isShortDigits = digitsOnly.length > 0 && digitsOnly.length <= 3;
+  const isLowConfidence = confidence !== null && (confidence < 0.96 || isUncertain);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-sm overflow-y-auto">
+      <div
+        className={`relative w-full max-w-2xl rounded-2xl border shadow-2xl transition-all overflow-hidden my-auto max-h-[90vh] flex flex-col ${
+          isEnterprise
+            ? 'border-slate-200 bg-white text-slate-900'
+            : isIndustrial
+              ? 'border-amber-500/40 bg-[#161d28] text-slate-100 shadow-amber-500/10'
+              : 'border-slate-800 bg-[#0d131f] text-slate-100'
+        }`}
+      >
+        <div
+          className={`flex items-center justify-between border-b p-5 ${
+            isEnterprise
+              ? 'border-slate-100 bg-slate-50/70'
+              : isIndustrial
+                ? 'border-slate-800 bg-[#111722]'
+                : 'border-slate-800 bg-slate-950/60'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className={`grid h-10 w-10 place-items-center rounded-xl font-black ${
+                isEnterprise
+                  ? 'bg-blue-100 text-blue-700'
+                  : isIndustrial
+                    ? 'bg-amber-500 text-slate-950 shadow-md'
+                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+              }`}
+            >
+              <Camera size={20} strokeWidth={2.4} />
+            </div>
+            <div>
+              <h2 className="text-lg font-black tracking-tight">
+                번호판 간편접수 & 자동 조회
+              </h2>
+              <p
+                className={`text-xs ${
+                  isEnterprise ? 'text-slate-500' : 'text-slate-400'
+                }`}
+              >
+                오토바이 번호판 사진을 인식하여 신규 접수하거나 기존 고객을 조회합니다.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="닫기"
+            className={`rounded-lg p-2 transition ${
+              isEnterprise
+                ? 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+            }`}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-5 sm:p-6 space-y-5 overflow-y-auto flex-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleImageSelected(f);
+                e.target.value = '';
+              }}
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleImageSelected(f);
+                e.target.value = '';
+              }}
+            />
+
+            <Button
+              type="button"
+              onClick={() => cameraInputRef.current?.click()}
+              disabled={loading}
+              className={`h-12 rounded-xl font-bold flex items-center justify-center gap-2 transition ${
+                isEnterprise
+                  ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                  : isIndustrial
+                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black'
+                    : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold'
+              }`}
+            >
+              <Camera size={18} />
+              <span>카메라 바로 촬영</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading}
+              className={`h-12 rounded-xl font-bold flex items-center justify-center gap-2 transition ${
+                isEnterprise || isIndustrial
+                  ? 'border-slate-300 bg-white text-slate-800 hover:bg-slate-50'
+                  : 'border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              <CloudUpload size={18} />
+              <span>사진 파일 선택</span>
+            </Button>
+          </div>
+
+          {imagePreview && (
+            <div className="relative rounded-xl border border-slate-700/60 overflow-hidden bg-black/40 p-2 flex items-center gap-4">
+              <img
+                src={imagePreview}
+                alt="번호판 사진"
+                className="h-20 w-28 object-cover rounded-lg border border-slate-700 shrink-0"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-slate-400">선택된 번호판 이미지</p>
+                <p className="text-sm font-bold text-slate-200 truncate">
+                  {imageFile?.name || 'capture.jpg'}
+                </p>
+                <p className="text-xs text-slate-500 font-mono">
+                  {imageFile ? `${Math.round(imageFile.size / 1024)} KB` : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setImageFile(null);
+                  if (imagePreview) URL.revokeObjectURL(imagePreview);
+                  setImagePreview(null);
+                }}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white mr-2"
+                title="사진 삭제"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                인식된 번호판 (직접 수정 및 검색)
+              </label>
+              <div className="flex items-center gap-2">
+                {confidence !== null && (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-mono font-bold border ${
+                      isLowConfidence
+                        ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                        : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                    }`}
+                  >
+                    {isLowConfidence ? (
+                      <>
+                        <AlertTriangle size={12} />
+                        확인 필요 ({Math.round((confidence || 0) * 100)}%)
+                      </>
+                    ) : (
+                      <>
+                        <Check size={12} />
+                        신뢰도 {Math.round(confidence * 100)}%
+                      </>
+                    )}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Input
+                  value={plateInput}
+                  onChange={(e) => setPlateInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleTextLookup();
+                  }}
+                  placeholder="예: 서울 강남 가 1234 또는 1234"
+                  className={`h-12 font-mono text-base sm:text-lg font-black tracking-wider ${
+                    isEnterprise
+                      ? 'border-slate-300 bg-white text-slate-900'
+                      : isIndustrial
+                        ? 'border-slate-700 bg-[#0e141e] text-white'
+                        : 'border-slate-700 bg-slate-900 text-white'
+                  }`}
+                />
+              </div>
+              <Button
+                type="button"
+                onClick={() => void handleTextLookup()}
+                disabled={loading || !plateInput.trim()}
+                variant="outline"
+                className={`h-12 px-4 font-bold shrink-0 ${
+                  isIndustrial
+                    ? 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+                    : ''
+                }`}
+              >
+                <Search size={16} className="mr-1" />
+                <span>재조회</span>
+              </Button>
+            </div>
+
+            <div className="space-y-1">
+              {isLowConfidence && (
+                <p className="text-xs text-amber-400 font-medium flex items-center gap-1.5">
+                  <AlertTriangle size={13} className="shrink-0" />
+                  <span>인식 신뢰도가 낮습니다. 번호판을 육안으로 확인 후 필요시 수정하세요. (수정 후 접수 가능)</span>
+                </p>
+              )}
+              {isShortDigits && (
+                <p className="text-xs text-amber-400/90 font-medium flex items-center gap-1.5">
+                  <AlertTriangle size={13} className="shrink-0" />
+                  <span>앞자리가 누락되지 않았는지 확인하세요 (예: 4자리 중 앞자리 1개가 미인식된 경우 직접 보완 가능).</span>
+                </p>
+              )}
+            </div>
+          </div>
+
+          {errorMessage && (
+            <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-rose-300 text-sm flex items-start gap-3">
+              <AlertTriangle size={18} className="text-rose-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-bold">조회 중 문제가 발생했습니다</p>
+                <p className="text-xs text-rose-200/90 leading-relaxed">{errorMessage}</p>
+              </div>
+            </div>
+          )}
+
+          {loading && (
+            <div className="grid place-items-center py-8">
+              <Spinner className={`h-8 w-8 ${isIndustrial ? 'text-amber-400' : 'text-emerald-400'}`} />
+              <p className="mt-3 text-sm font-bold text-slate-300 animate-pulse">
+                번호판 인식 및 고객 DB 매칭 질의 중...
+              </p>
+            </div>
+          )}
+
+          {!loading && result && (
+            <div className="pt-2">
+              {result.status === 'no_match' && (
+                <div
+                  className={`rounded-xl border p-5 space-y-4 ${
+                    isEnterprise
+                      ? 'border-slate-200 bg-slate-50'
+                      : isIndustrial
+                        ? 'border-slate-800 bg-[#0f141f]'
+                        : 'border-slate-800 bg-slate-900/50'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="grid h-10 w-10 place-items-center rounded-xl bg-slate-800 text-slate-400 shrink-0">
+                      <Search size={20} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-sm font-extrabold text-slate-200">
+                        등록된 고객 및 차량 정보가 없습니다
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-400 leading-relaxed">
+                        {result.notice ||
+                          '현재 시스템에 저장된 차량이 없습니다. 판독된 번호판으로 신규 고객·차량 정비를 바로 접수합니다.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    onClick={() => onNewRegistration(plateInput.trim() || result.extractedPlate || '')}
+                    className={`w-full h-12 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition ${
+                      isEnterprise
+                        ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-md'
+                        : isIndustrial
+                          ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black shadow-md'
+                          : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold'
+                    }`}
+                  >
+                    <Check size={18} strokeWidth={3} />
+                    <span>이 번호판으로 신규 정비 접수 (타이핑 없이 바로 시작)</span>
+                  </Button>
+                </div>
+              )}
+
+              {result.status === 'single_match' && result.candidate && (
+                <div
+                  className={`rounded-xl border p-5 space-y-4 ${
+                    isEnterprise
+                      ? 'border-emerald-200 bg-emerald-50/50'
+                      : isIndustrial
+                        ? 'border-amber-500/40 bg-amber-500/5'
+                        : 'border-emerald-500/30 bg-emerald-500/5'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs">
+                        ✓
+                      </span>
+                      <h3 className="text-sm font-black text-slate-100">
+                        기존 등록 고객 차량 일치
+                      </h3>
+                    </div>
+                    {result.candidate.isFallback && (
+                      <span className="rounded bg-amber-500/20 px-2 py-0.5 text-xs font-mono font-bold text-amber-300 border border-amber-500/40">
+                        3자리 유사 일치
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl bg-slate-950/60 border border-slate-800/80 p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-400">차주 성명</span>
+                      <strong className="text-sm font-extrabold text-slate-100">
+                        {result.candidate.customerName}
+                      </strong>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-400">연락처</span>
+                      <span className="text-xs font-mono font-bold text-slate-300">
+                        {result.candidate.phone}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-400">차종 및 매장</span>
+                      <span className="text-xs font-bold text-slate-200">
+                        {result.candidate.model} · {result.candidate.shopName || '지점 정보 없음'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-400">확정 번호판</span>
+                      <span className="text-xs font-mono font-black text-emerald-400">
+                        {result.candidate.fullPlate}
+                      </span>
+                    </div>
+
+                    {result.candidate.recentOrders && result.candidate.recentOrders.length > 0 && (
+                      <div className="pt-2 mt-2 border-t border-slate-800">
+                        <p className="text-[11px] font-bold text-slate-400 mb-1.5">최근 정비 이력</p>
+                        <div className="space-y-1">
+                          {result.candidate.recentOrders.map((ord) => (
+                            <div
+                              key={ord.id}
+                              className="flex items-center justify-between text-[11px] text-slate-400 font-mono"
+                            >
+                              <span>{ord.approved_service_date?.slice(0, 10) || '최근'} · {ord.service_type || '일반정비'}</span>
+                              <span className="font-bold text-slate-300">{won.format(ord.total_amount)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      onClick={() => onSelectCustomer(result.candidate!)}
+                      className={`h-11 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition ${
+                        isEnterprise
+                          ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                          : isIndustrial
+                            ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black'
+                            : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold'
+                      }`}
+                    >
+                      <Check size={16} />
+                      <span>이 고객으로 정비 접수</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => onNewRegistration(plateInput.trim() || result.candidate!.fullPlate)}
+                      className="h-11 rounded-xl font-bold text-xs border-slate-700 hover:bg-slate-800 text-slate-300"
+                    >
+                      <span>신규 차량으로 접수</span>
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {result.status === 'multiple_matches' && result.candidates && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                      일치하는 차량 후보 ({result.candidates.length}건)
+                    </h3>
+                    <span className="text-[11px] text-slate-400">해당 고객을 선택하세요</span>
+                  </div>
+
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {result.candidates.map((cand) => (
+                      <div
+                        key={cand.vehicleId}
+                        className={`rounded-xl border p-3 flex items-center justify-between gap-3 transition ${
+                          isEnterprise
+                            ? 'border-slate-200 bg-slate-50 hover:bg-slate-100'
+                            : 'border-slate-800 bg-slate-950/40 hover:bg-slate-900/60'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <strong className="text-sm font-black text-slate-100">
+                              {cand.customerName}
+                            </strong>
+                            <span className="text-xs font-mono text-slate-400">
+                              {cand.phone}
+                            </span>
+                            {cand.isFallback && (
+                              <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-mono font-bold text-amber-300 border border-amber-500/30">
+                                3자리 유사
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {cand.model} · <span className="font-mono text-slate-300">{cand.fullPlate}</span> · {cand.shopName || '지점'}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => onSelectCustomer(cand)}
+                          className={`shrink-0 h-8 px-3 rounded-lg font-bold text-xs ${
+                            isIndustrial
+                              ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black'
+                              : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold'
+                          }`}
+                        >
+                          선택
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => onNewRegistration(plateInput.trim() || result.extractedPlate || '')}
+                    className="w-full h-10 rounded-xl font-bold text-xs border-slate-700 hover:bg-slate-800 text-slate-300"
+                  >
+                    <span>목록에 없음 - 이 번호판으로 신규 접수</span>
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div
+          className={`flex items-center justify-between border-t p-4 px-6 text-xs font-mono ${
+            isEnterprise
+              ? 'border-slate-100 bg-slate-50 text-slate-500'
+              : 'border-slate-800/80 bg-slate-950/80 text-slate-400'
+          }`}
+        >
+          <span>보안 규정: HMAC-SHA256 해시 검색 · PII 마스킹 보호</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onClose}
+            className="text-xs text-slate-400 hover:text-white"
+          >
+            닫기
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+

@@ -45,6 +45,8 @@ export const users = sqliteTable(
     })
       .notNull()
       .default('pending'),
+    passwordHash: text('password_hash'),
+    passwordUpdatedAt: integer('password_updated_at', { mode: 'timestamp_ms' }),
     ...ts,
   },
   (t) => [uniqueIndex('users_external_uq').on(t.externalUserId)],
@@ -266,6 +268,7 @@ export const vehicles = sqliteTable(
     customerId: text('customer_id').references(() => customers.id),
     plateEncrypted: text('plate_encrypted'),
     plateHash: text('plate_hash'),
+    plateDigitsHash: text('plate_digits_hash'),
     manufacturer: text('manufacturer'),
     model: text('model'),
     displacementCc: integer('displacement_cc'),
@@ -275,8 +278,20 @@ export const vehicles = sqliteTable(
     }).notNull(),
     ...ts,
   },
-  (t) => [index('vehicles_plate_hash_idx').on(t.organizationId, t.plateHash)],
+  (t) => [
+    index('vehicles_plate_hash_idx').on(t.organizationId, t.plateHash),
+    index('vehicles_plate_digits_idx').on(t.organizationId, t.plateDigitsHash),
+  ],
 );
+
+export const securityRateLimits = sqliteTable('security_rate_limits', {
+  key: text('key').primaryKey(),
+  requestCount: integer('request_count').notNull().default(1),
+  windowStart: integer('window_start').notNull(),
+  consecutiveNoMatch: integer('consecutive_no_match').notNull().default(0),
+  blockedUntil: integer('blocked_until').notNull().default(0),
+  updatedAt: integer('updated_at').notNull(),
+});
 export const serviceOrders = sqliteTable(
   'service_orders',
   {

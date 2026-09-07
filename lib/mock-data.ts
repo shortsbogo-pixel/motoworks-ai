@@ -116,16 +116,16 @@ export const expectedReviewDocuments: ReviewDocument[] = expectedFiles.map(
 export const baselineReference = {
   verified: false,
   sourceAvailable: false,
-  serviceOrders: 211,
-  serviceItems: 324,
-  revenue: 6_493_000,
-  customers: 178,
-  rentalOrders: 54,
-  rentalVehicles: 36,
-  period: '2026-08-14 ~ 2026-09-02',
+  serviceOrders: 0,
+  serviceItems: 0,
+  revenue: 0,
+  customers: 0,
+  rentalOrders: 0,
+  rentalVehicles: 0,
+  period: '미등록 (연결 대기)',
   shops: [
-    { name: '진바이크 용전점', orders: 96, revenue: 2_670_000 },
-    { name: '코아바이크 자양점', orders: 115, revenue: 3_823_000 },
+    { name: '진바이크 용전점', orders: 0, revenue: 0 },
+    { name: '코아바이크 자양점', orders: 0, revenue: 0 },
   ],
 };
 
