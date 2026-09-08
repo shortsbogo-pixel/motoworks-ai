@@ -298,6 +298,10 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
   const [view, setView] = useState<View>('dashboard');
   const [documents, setDocuments] = useState<ReviewDocument[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [ordersMeta, setOrdersMeta] = useState<{ total: number; truncated: boolean }>({
+    total: 0,
+    truncated: false,
+  });
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
   const [rentals, setRentals] = useState<RentalRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([]);
@@ -349,8 +353,16 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
       // 2. 승인된 정비내역
       const ordRes = await fetch('/api/orders', { cache: 'no-store' });
       if (ordRes.ok) {
-        const payload = (await ordRes.json()) as { orders?: OrderRecord[] };
+        const payload = (await ordRes.json()) as {
+          orders?: OrderRecord[];
+          total?: number;
+          truncated?: boolean;
+        };
         if (payload?.orders) setOrders(payload.orders);
+        setOrdersMeta({
+          total: typeof payload.total === 'number' ? payload.total : payload.orders?.length ?? 0,
+          truncated: !!payload.truncated,
+        });
       }
 
       // 3. 대시보드 통계
@@ -809,7 +821,14 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
               onDataChanged={refreshAllData}
             />
           )}
-          {view === 'orders' && <Orders approved={approvedToday} orders={orders} />}
+          {view === 'orders' && (
+            <Orders
+              approved={approvedToday}
+              orders={orders}
+              total={ordersMeta.total}
+              truncated={ordersMeta.truncated}
+            />
+          )}
           {view === 'guide' && (
             <GuideView
               navigate={navigate}
@@ -2357,9 +2376,13 @@ function DocumentPreview({ document }: { document: ReviewDocument }) {
 function Orders({
   approved,
   orders,
+  total = 0,
+  truncated = false,
 }: {
   approved: ReviewDocument[];
   orders: OrderRecord[];
+  total?: number;
+  truncated?: boolean;
 }) {
   const isDbLive = orders.length > 0;
   const rows = isDbLive
@@ -2426,15 +2449,40 @@ function Orders({
           {isDbLive ? '영구 데이터베이스 반영됨' : '참조 기준값'}
         </Badge>
       </div>
+      {truncated && (
+        <div className={`flex items-center gap-3 border-b px-5 py-3.5 text-sm font-medium ${
+          isEnterprise
+            ? 'bg-amber-50 text-amber-900 border-amber-200'
+            : isIndustrial
+              ? 'bg-amber-950/40 text-amber-300 border-amber-800/60'
+              : 'bg-amber-950/30 text-amber-400 border-amber-900/50'
+        }`}>
+          <AlertTriangle className="shrink-0 text-amber-500" size={18} />
+          <p>
+            전체 <strong className="font-mono font-bold">{total}건</strong> 중 최근 200건만 표시됩니다. 결제수단별 합계도 표시된 건만 반영되니 참고하세요.
+          </p>
+        </div>
+      )}
       <OrderTable rows={rows} />
       <div className={`border-t p-5 ${
         isEnterprise || isIndustrial ? 'border-slate-200 bg-slate-50/60' : 'border-slate-800 bg-slate-900/60'
       }`}>
-        <p className={`text-sm font-semibold ${
-          isEnterprise || isIndustrial ? 'text-slate-800' : 'text-slate-300'
-        }`}>
-          {isDbLive ? '실제 집계된 결제 수단별 금액 (승인 완료 건)' : '분할 결제 예시'}
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className={`text-sm font-semibold ${
+            isEnterprise || isIndustrial ? 'text-slate-800' : 'text-slate-300'
+          }`}>
+            {isDbLive ? '실제 집계된 결제 수단별 금액 (승인 완료 건)' : '분할 결제 예시'}
+          </p>
+          {truncated && (
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded ${
+              isEnterprise
+                ? 'bg-amber-100 text-amber-800'
+                : 'bg-amber-900/40 text-amber-400 border border-amber-800/50'
+            }`}>
+              * 표시된 200건 기준
+            </span>
+          )}
+        </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <PaymentPart method="카드" amount={isDbLive ? paymentBreakdown.card : 30000} />
           <PaymentPart method="현금" amount={isDbLive ? paymentBreakdown.cash : 10000} />

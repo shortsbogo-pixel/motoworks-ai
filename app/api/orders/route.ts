@@ -29,7 +29,7 @@ export async function GET(request: Request) {
 
     const allowedShops = getAllowedShops(user, 'view');
     if (allowedShops.length === 0) {
-      return Response.json({ orders: [] });
+      return Response.json({ orders: [], total: 0, truncated: false });
     }
 
     const targetShops = shopParam
@@ -37,11 +37,21 @@ export async function GET(request: Request) {
       : allowedShops;
 
     if (targetShops.length === 0) {
-      return Response.json({ orders: [] });
+      return Response.json({ orders: [], total: 0, truncated: false });
     }
 
     const canViewPii = hasPermission(user, 'view_pii');
     const shopPlaceholders = targetShops.map(() => '?').join(',');
+
+    const countRow = await runtime.DB.prepare(
+      `SELECT COUNT(*) AS total
+         FROM service_orders so
+        WHERE so.organization_id = ? AND so.shop_id IN (${shopPlaceholders})`,
+    )
+      .bind(ORGANIZATION_ID, ...targetShops)
+      .first<{ total: number }>();
+
+    const total = countRow?.total ?? 0;
 
     const rows = await runtime.DB.prepare(
       `SELECT so.id, so.shop_id, s.name AS shop_name, so.approved_service_date,
@@ -146,7 +156,13 @@ export async function GET(request: Request) {
       }),
     );
 
-    return Response.json({ orders });
+    const truncated = total > orders.length;
+
+    return Response.json({
+      orders,
+      total,
+      truncated,
+    });
   } catch (error) {
     return errorResponse(error);
   }

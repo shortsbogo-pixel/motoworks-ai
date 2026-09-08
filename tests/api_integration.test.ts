@@ -35,6 +35,8 @@ interface OrdersResponse {
     customerName: string;
     [key: string]: unknown;
   }>;
+  total?: number;
+  truncated?: boolean;
 }
 
 interface DashboardResponse {
@@ -532,6 +534,125 @@ describe('API 통합 시나리오 검증 (tests/api_integration.test.ts)', () =>
         .first<{ total: number }>();
 
       expect(inspection.revenue).toBe(dbSum!.total);
+    });
+  });
+
+  // Scenario 8: orders LIMIT 200 잘림 감지 (total 및 truncated)
+  describe('시나리오 8: orders LIMIT 200 잘림 감지 (total 및 truncated)', () => {
+    const clearAllOrders = async () => {
+      await d1.prepare(`DELETE FROM payments WHERE service_order_id IN (SELECT id FROM service_orders WHERE organization_id = ?1)`).bind(ORGANIZATION_ID).run();
+      await d1.prepare(`DELETE FROM service_items WHERE service_order_id IN (SELECT id FROM service_orders WHERE organization_id = ?1)`).bind(ORGANIZATION_ID).run();
+      await d1.prepare(`DELETE FROM service_orders WHERE organization_id = ?1`).bind(ORGANIZATION_ID).run();
+    };
+
+    it('201건 이상을 넣고 GET /api/orders 호출 시 total이 실제 건수(205)와 일치하고 truncated: true가 반환된다', async () => {
+      const { GET: getOrders } = await import('../app/api/orders/route');
+      const now = Date.now();
+
+      // 기존 주문 초기화
+      await clearAllOrders();
+
+      // 205건 대량 삽입 (LIMIT 200 초과)
+      const stmts = [];
+      for (let i = 1; i <= 205; i++) {
+        stmts.push(
+          d1.prepare(
+            `INSERT INTO service_orders (id, organization_id, shop_id, shop_certainty, service_type, status, total_amount, created_at, updated_at)
+             VALUES (?, ?, 'yongjeon', 'confirmed', 'regular', 'approved', 10000, ?, ?)`,
+          ).bind(`ord_bulk_${i}`, ORGANIZATION_ID, now + i, now + i),
+        );
+      }
+      await d1.batch(stmts);
+
+      const adminCookie = await createAuthCookie('user:owner:shortsbogo@gmail.com', 'shortsbogo@gmail.com');
+      const req = new Request('http://localhost:5173/api/orders', {
+        headers: { Cookie: adminCookie },
+      });
+
+      const res = await getOrders(req);
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as OrdersResponse;
+
+      expect(data.orders).toHaveLength(200);
+      expect(data.total).toBe(205);
+      expect(data.truncated).toBe(true);
+    });
+
+    it('200건 이하(150건)일 때 total이 150이고 truncated: false가 반환된다', async () => {
+      const { GET: getOrders } = await import('../app/api/orders/route');
+      const now = Date.now();
+
+      // 기존 주문 초기화
+      await clearAllOrders();
+
+      // 150건 삽입 (LIMIT 200 이하)
+      const stmts = [];
+      for (let i = 1; i <= 150; i++) {
+        stmts.push(
+          d1.prepare(
+            `INSERT INTO service_orders (id, organization_id, shop_id, shop_certainty, service_type, status, total_amount, created_at, updated_at)
+             VALUES (?, ?, 'yongjeon', 'confirmed', 'regular', 'approved', 10000, ?, ?)`,
+          ).bind(`ord_sub200_${i}`, ORGANIZATION_ID, now + i, now + i),
+        );
+      }
+      await d1.batch(stmts);
+
+      const adminCookie = await createAuthCookie('user:owner:shortsbogo@gmail.com', 'shortsbogo@gmail.com');
+      const req = new Request('http://localhost:5173/api/orders', {
+        headers: { Cookie: adminCookie },
+      });
+
+      const res = await getOrders(req);
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as OrdersResponse;
+
+      expect(data.orders).toHaveLength(150);
+      expect(data.total).toBe(150);
+      expect(data.truncated).toBe(false);
+    });
+
+    it('지점 권한이 다른 사용자의 total이 자기 지점 건수만 센다 (타 지점 건수 누출 방지)', async () => {
+      const { GET: getOrders } = await import('../app/api/orders/route');
+      const now = Date.now();
+
+      // 기존 주문 초기화
+      await clearAllOrders();
+
+      // 용전센터 10건, 자양센터 5건 생성
+      const stmts = [];
+      for (let i = 1; i <= 10; i++) {
+        stmts.push(
+          d1.prepare(
+            `INSERT INTO service_orders (id, organization_id, shop_id, shop_certainty, service_type, status, total_amount, created_at, updated_at)
+             VALUES (?, ?, 'yongjeon', 'confirmed', 'regular', 'approved', 10000, ?, ?)`,
+          ).bind(`ord_scope_yj_${i}`, ORGANIZATION_ID, now + i, now + i),
+        );
+      }
+      for (let i = 1; i <= 5; i++) {
+        stmts.push(
+          d1.prepare(
+            `INSERT INTO service_orders (id, organization_id, shop_id, shop_certainty, service_type, status, total_amount, created_at, updated_at)
+             VALUES (?, ?, 'jayang', 'confirmed', 'regular', 'approved', 20000, ?, ?)`,
+          ).bind(`ord_scope_jy_${i}`, ORGANIZATION_ID, now + i, now + i),
+        );
+      }
+      await d1.batch(stmts);
+
+      // 용전센터 직원 쿠키로 조회
+      const yjCookie = await createAuthCookie('user:ext_yj_staff', 'yongjeon_staff@example.com');
+      const yjReq = new Request('http://localhost:5173/api/orders', {
+        headers: { Cookie: yjCookie },
+      });
+
+      const yjRes = await getOrders(yjReq);
+      expect(yjRes.status).toBe(200);
+      const yjData = (await yjRes.json()) as OrdersResponse;
+
+      // 전체 15건 중 자기 지점(용전 10건)만 total로 계산되어야 함
+      expect(yjData.total).toBe(10);
+      expect(yjData.orders).toHaveLength(10);
+      expect(yjData.truncated).toBe(false);
+      expect(yjData.orders.every((o) => o.shopId === 'yongjeon')).toBe(true);
     });
   });
 });

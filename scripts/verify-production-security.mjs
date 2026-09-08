@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 
-const BASE_URL = 'https://motoworks.corepartners.kr';
-const EMAIL = 'shortsbogo@gmail.com';
+const BASE_URL = process.env.BASE_URL || 'https://motoworks.corepartners.kr';
+const EMAIL = process.env.ADMIN_EMAIL || process.env.BOOTSTRAP_OWNER_EMAIL || 'shortsbogo@gmail.com';
 
 const PROTECTED_ENDPOINTS = [
   { path: '/api/vehicles/lookup-plate', method: 'POST', body: JSON.stringify({ plateText: '1234' }) },
