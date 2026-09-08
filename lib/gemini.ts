@@ -96,6 +96,7 @@ export async function extractMaintenanceDocument(input: {
     primaryModel,
     'gemini-3.6-flash',
     'gemini-3.5-flash',
+    'gemini-2.5-flash',
     'gemini-3.5-flash-lite',
   ].filter((m, idx, arr) => arr.indexOf(m) === idx);
 
@@ -105,6 +106,15 @@ export async function extractMaintenanceDocument(input: {
 
   for (const model of candidateModels) {
     try {
+      const thinkingLevel = model.startsWith('gemini-2') ? undefined : 'medium';
+      const generationConfig: Record<string, unknown> = {
+        responseMimeType: 'application/json',
+        responseJsonSchema: extractionResponseSchema,
+      };
+      if (thinkingLevel) {
+        generationConfig.thinkingConfig = { thinkingLevel };
+      }
+
       const response = await fetchImpl(
         `${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`,
         {
@@ -152,11 +162,7 @@ export async function extractMaintenanceDocument(input: {
                 ],
               },
             ],
-            generationConfig: {
-              responseMimeType: 'application/json',
-              responseJsonSchema: extractionResponseSchema,
-              thinkingConfig: { thinkingLevel: 'medium' },
-            },
+            generationConfig,
           }),
         },
       );
@@ -165,8 +171,8 @@ export async function extractMaintenanceDocument(input: {
         const detail = await response.text();
         const err = new Error(`Gemini API ${response.status} (${model}): ${safeErrorDetail(detail)}`);
         lastError = err;
-        // If 429 (quota), 503 (high demand), or 404 (model unavailable), try fallback model
-        if ([429, 503, 404].includes(response.status) && model !== candidateModels[candidateModels.length - 1]) {
+        // If 400, 429 (quota), 503 (high demand), or 404 (model unavailable), try fallback model
+        if ([400, 429, 503, 404].includes(response.status) && model !== candidateModels[candidateModels.length - 1]) {
           continue;
         }
         throw err;
@@ -353,6 +359,8 @@ export type LicensePlateExtraction = {
 };
 
 export const MODEL_DEFAULT_THINKING: Record<string, 'minimal' | 'low' | 'medium'> = {
+  'gemini-3.6-flash': 'low',
+  'gemini-3.5-flash': 'low',
   'gemini-3.5-flash-lite': 'minimal',
   'gemini-3.7-flash': 'low',
   'gemini-3.8-flash': 'low',
@@ -370,8 +378,8 @@ export async function extractLicensePlate(input: {
   const candidateModels = [
     primaryModel,
     'gemini-3.6-flash',
-    'gemini-3.7-flash',
     'gemini-3.5-flash',
+    'gemini-2.5-flash',
     'gemini-3.5-flash-lite',
   ].filter((m, idx, arr) => arr.indexOf(m) === idx);
 
@@ -407,8 +415,16 @@ export async function extractLicensePlate(input: {
   let lastError: Error = new Error('Gemini 번호판 판독에 실패했습니다.');
 
   for (const model of candidateModels) {
-    const thinkingLevel = MODEL_DEFAULT_THINKING[model] ?? 'low';
+    const thinkingLevel = MODEL_DEFAULT_THINKING[model];
     const url = `${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+
+    const generationConfig: Record<string, unknown> = {
+      responseMimeType: 'application/json',
+      responseSchema: responseSchema,
+    };
+    if (thinkingLevel) {
+      generationConfig.thinkingConfig = { thinkingLevel };
+    }
 
     const body = {
       contents: [
@@ -425,13 +441,7 @@ export async function extractLicensePlate(input: {
           ],
         },
       ],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: responseSchema,
-        thinkingConfig: {
-          thinkingLevel: thinkingLevel,
-        },
-      },
+      generationConfig,
     };
 
     try {

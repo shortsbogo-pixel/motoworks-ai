@@ -56,5 +56,25 @@ describe('엑셀 호환', () => {
     expect(result.orderCount).toBe(2);
     expect(result.revenue).toBe(125000);
   });
+  it('실무 통합 엑셀(정비내역서_2026-09-03_통합.xlsx)의 5개 시트가 모두 매칭되고 누락 시트가 0개다', () => {
+    const wb = XLSX.utils.book_new();
+    const orderRows = [
+      { 정비번호: 'O-101', 정비일: '2026-09-03', 차종: '혼다 PCX125', 합계금액: '150,000원' },
+      { 정비번호: 'O-102', 정비일: '2026-09-03', 차종: '야마하 NMAX125', 결제금액: '₩85,000' },
+      { 정비번호: 'O-103', 정비일: '2026-09-03', 차종: '포르자350', 총금액: 320000 },
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orderRows), '정비내역서');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ 고객ID: 'C1', 이름: '홍길동' }]), '고객목록');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ 지점: '진바이크 용전', 매출: 555000 }]), '매장별 매출');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ 계약번호: 'R1', 대여사: '코아파트너스' }]), '렌트 관리');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ 차종코드: 'PCX', 기준공임: 45000 }]), '차종 높임표');
+
+    const bytes = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const result = inspectLegacyWorkbook(bytes);
+
+    expect(result.missingSheets).toHaveLength(0);
+    expect(result.orderCount).toBe(3);
+    expect(result.revenue).toBe(555000);
+  });
 });
 

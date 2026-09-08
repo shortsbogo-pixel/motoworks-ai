@@ -2994,17 +2994,21 @@ function ExcelView({
         body: form,
       });
       if (res.ok) {
-        const payload = (await res.json()) as {
-          structure: {
-            sheetNames: string[];
-            missingSheets: string[];
-            orderCount: number;
-            revenue: number;
-          };
+        const payload = (await res.json()) as Record<string, unknown>;
+        const struct = (payload.structure || payload) as {
+          sheetNames?: string[];
+          missingSheets?: string[];
+          orderCount?: number;
+          revenue?: number;
         };
-        setResult(payload.structure);
+        setResult({
+          sheetNames: Array.isArray(struct.sheetNames) ? struct.sheetNames : [],
+          missingSheets: Array.isArray(struct.missingSheets) ? struct.missingSheets : [],
+          orderCount: typeof struct.orderCount === 'number' ? struct.orderCount : 0,
+          revenue: typeof struct.revenue === 'number' ? struct.revenue : 0,
+        });
         setNotice(
-          `${file.name} 서버 구조 검사를 완료했습니다 (${payload.structure.sheetNames.length}개 시트 검증, ${payload.structure.orderCount}건).`,
+          `${file.name} 서버 구조 검사를 완료했습니다 (${(struct.sheetNames || []).length}개 시트 검증, ${struct.orderCount ?? 0}건).`,
         );
       } else {
         const { inspectLegacyWorkbook } = await import('@/lib/excel');
@@ -3067,7 +3071,7 @@ function ExcelView({
               value={
                 result.missingSheets.length
                   ? result.missingSheets.join(', ')
-                  : '없음 (5개 표준 시트 완전 일치)'
+                  : '없음 (5개 표준/실무 시트 매칭 완료)'
               }
             />
           </div>
