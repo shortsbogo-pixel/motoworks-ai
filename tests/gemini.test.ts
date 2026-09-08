@@ -74,4 +74,70 @@ describe('Gemini 정비내역서 판독 계약', () => {
     expect(result.document_id).toBe('doc:3');
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
+
+  it('extractLicensePlate: Google API 지역 제한(400) 시 isLocationBlocked를 에러 객체에 태깅한다', async () => {
+    const { extractLicensePlate } = await import('../lib/gemini');
+    const fetchImpl = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 400,
+            message: 'User location is not supported for the API use.',
+            status: 'FAILED_PRECONDITION',
+          },
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+
+    await expect(
+      extractLicensePlate({
+        imageBase64: 'base64data',
+        mimeType: 'image/jpeg',
+        apiKey: 'test-key',
+        fetchImpl: fetchImpl as typeof fetch,
+      }),
+    ).rejects.toMatchObject({
+      isLocationBlocked: true,
+      code: 'LOCATION_NOT_SUPPORTED',
+    });
+  });
+
+  it('extractLicensePlate: 커스텀 baseUrl 설정을 존중하여 요청 URL을 구성한다', async () => {
+    const { extractLicensePlate } = await import('../lib/gemini');
+    let requestedUrl = '';
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      requestedUrl = String(url);
+      return Response.json({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    full_plate: '서울 마포 가 1234',
+                    plate_digits: '1234',
+                    confidence: 0.95,
+                    is_uncertain: false,
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      });
+    });
+
+    const res = await extractLicensePlate({
+      imageBase64: 'base64data',
+      mimeType: 'image/jpeg',
+      apiKey: 'test-key',
+      baseUrl: 'https://gateway.ai.cloudflare.com/v1/test/gemini',
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+
+    expect(requestedUrl).toContain('https://gateway.ai.cloudflare.com/v1/test/gemini/v1beta/models');
+    expect(res.plate_digits).toBe('1234');
+    expect(res.full_plate).toBe('서울 마포 가 1234');
+  });
 });

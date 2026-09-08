@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
+  AlertCircle,
   AlertTriangle,
   Banknote,
   Camera,
@@ -20,7 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { useDesignTheme } from '@/components/app-shell';
-import { optimizeReceiptImage } from '@/lib/client/image-optimizer';
+import { optimizeReceiptImage, generatePreviewDataUrl } from '@/lib/client/image-optimizer';
 
 export interface VehicleCandidate {
   vehicleId: string;
@@ -93,6 +94,11 @@ export function ManualOrderModal({
   const [lookupConfidence, setLookupConfidence] = useState<number | null>(null);
   const [candidates, setCandidates] = useState<VehicleCandidate[]>([]);
   const [lookupError, setLookupError] = useState<string | null>(null);
+  const [lookupNotice, setLookupNotice] = useState<{
+    title: string;
+    message: string;
+    isWarning?: boolean;
+  } | null>(null);
 
   // 선택된 차량 / 고객 정보
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleCandidate | null>(null);
@@ -131,6 +137,7 @@ export function ManualOrderModal({
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const plateInputRef = useRef<HTMLInputElement>(null);
 
   // 모달 라이프사이클: 열릴 때 키 1회 생성
   useEffect(() => {
@@ -144,9 +151,10 @@ export function ManualOrderModal({
       setIsNewVehicle(!initialPlate);
       setSubmitError(null);
       setLookupError(null);
+      setLookupNotice(null);
     } else {
       setIdempotencyKey('');
-      if (imagePreview) URL.revokeObjectURL(imagePreview);
+      if (imagePreview && imagePreview.startsWith('blob:')) URL.revokeObjectURL(imagePreview);
       setImagePreview(null);
       setImageFile(null);
     }
@@ -163,11 +171,14 @@ export function ManualOrderModal({
   // 번호판 이미지 업로드 및 AI 판독
   const handleImageSelected = async (file: File) => {
     setImageFile(file);
-    if (imagePreview) URL.revokeObjectURL(imagePreview);
-    const url = URL.createObjectURL(file);
-    setImagePreview(url);
+    if (imagePreview && imagePreview.startsWith('blob:')) URL.revokeObjectURL(imagePreview);
+
+    // 모바일 웹뷰 호환성을 위한 Base64 Data URL 생성
+    const previewUrl = await generatePreviewDataUrl(file);
+    setImagePreview(previewUrl);
     setLookupLoading(true);
     setLookupError(null);
+    setLookupNotice(null);
 
     try {
       const optimized = await optimizeReceiptImage(file);
@@ -199,6 +210,7 @@ export function ManualOrderModal({
 
     setLookupLoading(true);
     setLookupError(null);
+    setLookupNotice(null);
 
     try {
       const res = await fetch('/api/vehicles/lookup-plate', {
@@ -224,16 +236,48 @@ export function ManualOrderModal({
   const handleLookupSuccess = (data: {
     plateText?: string;
     extractedPlate?: string;
+    plateDigits?: string;
     confidence?: number;
     exact?: VehicleCandidate | null;
     candidates?: VehicleCandidate[];
     candidate?: VehicleCandidate | null;
     status?: string;
+    isLocationBlocked?: boolean;
+    ocrFailed?: boolean;
+    notice?: string;
   }) => {
+    // 0. Cloudflare 엣지 리전 제한 또는 AI 자동 판독 실패 분기
+    if (data.isLocationBlocked) {
+      setLookupNotice({
+        title: '클라우드 엣지 AI 판독 제한',
+        message: '클라우드 엣지(Cloudflare) 리전 제한으로 AI 자동 인식이 지원되지 않습니다. 아래 번호판 4자리를 직접 입력 후 [조회]를 눌러주세요.',
+        isWarning: true,
+      });
+      setStep('lookup');
+      setTimeout(() => {
+        plateInputRef.current?.focus();
+      }, 100);
+      return;
+    }
+
+    if (data.ocrFailed || (!data.plateText && !data.extractedPlate && !data.plateDigits)) {
+      setLookupNotice({
+        title: '번호판 자동 판독 실패',
+        message: data.notice || '사진에서 번호판 숫자를 인식하지 못했습니다. 번호판 4자리를 직접 입력해 주세요.',
+        isWarning: true,
+      });
+      setStep('lookup');
+      setTimeout(() => {
+        plateInputRef.current?.focus();
+      }, 100);
+      return;
+    }
+
     const detectedPlate = data.plateText || data.extractedPlate || plateInput.trim();
     setPlateInput(detectedPlate);
     setCustomPlate(detectedPlate);
     setLookupConfidence(data.confidence ?? null);
+    setLookupNotice(null);
 
     const exactMatch = data.exact || (data.status === 'single_match' ? data.candidate : null);
     const candidateList = data.candidates || (data.candidate ? [data.candidate] : []);
@@ -522,7 +566,10 @@ export function ManualOrderModal({
                   <img
                     src={imagePreview}
                     alt="촬영된 번호판"
-                    className="h-20 w-28 object-cover rounded-lg border border-slate-700 shrink-0"
+                    className="h-20 w-28 object-cover rounded-lg border border-slate-700 shrink-0 bg-slate-900"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLElement).style.opacity = '0.5';
+                    }}
                   />
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-semibold text-slate-400">촬영된 이미지</p>
@@ -537,7 +584,7 @@ export function ManualOrderModal({
                     type="button"
                     onClick={() => {
                       setImageFile(null);
-                      if (imagePreview) URL.revokeObjectURL(imagePreview);
+                      if (imagePreview && imagePreview.startsWith('blob:')) URL.revokeObjectURL(imagePreview);
                       setImagePreview(null);
                     }}
                     className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white mr-2"
@@ -547,12 +594,23 @@ export function ManualOrderModal({
                 </div>
               )}
 
+              {lookupNotice && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-amber-300 text-xs flex items-start gap-2.5 shadow-sm">
+                  <AlertCircle size={18} className="shrink-0 text-amber-400 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-bold text-amber-200">{lookupNotice.title}</p>
+                    <p className="text-amber-300/90 mt-0.5 leading-relaxed">{lookupNotice.message}</p>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-400">
                   직접 번호판 입력 또는 번호판 뒷자리 (4자리)
                 </label>
                 <div className="flex gap-2">
                   <Input
+                    ref={plateInputRef}
                     value={plateInput}
                     onChange={(e) => setPlateInput(e.target.value)}
                     onKeyDown={(e) => {

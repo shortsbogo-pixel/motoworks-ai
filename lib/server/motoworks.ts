@@ -8,6 +8,7 @@ export type MotoworksEnv = {
   GEMINI_API_KEY?: string;
   GEMINI_VISION_MODEL?: string;
   GEMINI_PLATE_MODEL?: string;
+  GEMINI_BASE_URL?: string;
   PLATE_HASH_SECRET?: string;
   SESSION_SECRET?: string;
 };

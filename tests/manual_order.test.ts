@@ -310,6 +310,42 @@ describe('수기 현장 접수 (Manual Order Intake) 핵심 4대 안전장치 �
       const leakedJayang = data.candidates?.find((c: any) => c.vehicleId === jayangVehId);
       expect(leakedJayang).toBeUndefined();
     });
+
+    it('AI 번호판 판독 시 Cloudflare 엣지 리전 제한(400) 발생 시 500 에러 대신 200 no_match 및 isLocationBlocked=true로 우아하게 대응한다', async () => {
+      mockEnv.GEMINI_API_KEY = 'test-gemini-key';
+      const { POST: postLookupPlate } = await import('../app/api/vehicles/lookup-plate/route');
+      const adminCookie = await createAuthCookie('user:owner:shortsbogo@gmail.com', 'shortsbogo@gmail.com');
+
+      // extractLicensePlate가 location block 에러를 던지도록 spy
+      const geminiMod = await import('../lib/gemini');
+      const spy = vi.spyOn(geminiMod, 'extractLicensePlate').mockRejectedValueOnce(
+        Object.assign(
+          new Error('Gemini 번호판 판독 실패 (400): User location is not supported for the API use.'),
+          { isLocationBlocked: true, code: 'LOCATION_NOT_SUPPORTED' },
+        ),
+      );
+
+      const formData = new FormData();
+      const fakeFile = new File(['fake-image-bytes'], 'plate.jpg', { type: 'image/jpeg' });
+      formData.append('image', fakeFile);
+
+      const req = new Request('http://localhost:5173/api/vehicles/lookup-plate', {
+        method: 'POST',
+        headers: { Cookie: adminCookie },
+        body: formData,
+      });
+
+      const res = await postLookupPlate(req);
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as any;
+
+      expect(data.status).toBe('no_match');
+      expect(data.isLocationBlocked).toBe(true);
+      expect(data.ocrFailed).toBe(true);
+      expect(data.notice).toContain('클라우드 엣지 리전');
+
+      spy.mockRestore();
+    });
   });
 
   // 4. PII 마스킹(*) 문자열 유입 차단 검증

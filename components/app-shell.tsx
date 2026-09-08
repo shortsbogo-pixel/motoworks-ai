@@ -48,7 +48,7 @@ import {
   baselineReference,
 } from '@/lib/mock-data';
 import { shouldHighlightField, type ReviewDocument } from '@/lib/domain';
-import { optimizeReceiptImage } from '@/lib/client/image-optimizer';
+import { optimizeReceiptImage, generatePreviewDataUrl } from '@/lib/client/image-optimizer';
 import { LoginView, type UserProfile } from '@/components/login-view';
 import { ManualOrderModal } from '@/components/manual-order-modal';
 
@@ -3877,9 +3877,9 @@ function PlateLookupModal({
 
   const handleImageSelected = async (file: File) => {
     setImageFile(file);
-    if (imagePreview) URL.revokeObjectURL(imagePreview);
-    const url = URL.createObjectURL(file);
-    setImagePreview(url);
+    if (imagePreview && imagePreview.startsWith('blob:')) URL.revokeObjectURL(imagePreview);
+    const previewUrl = await generatePreviewDataUrl(file);
+    setImagePreview(previewUrl);
     setLoading(true);
     setErrorMessage(null);
     setResult(null);
@@ -4095,7 +4095,10 @@ function PlateLookupModal({
               <img
                 src={imagePreview}
                 alt="번호판 사진"
-                className="h-20 w-28 object-cover rounded-lg border border-slate-700 shrink-0"
+                className="h-20 w-28 object-cover rounded-lg border border-slate-700 shrink-0 bg-slate-900"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.opacity = '0.5';
+                }}
               />
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold text-slate-400">선택된 번호판 이미지</p>
@@ -4110,7 +4113,7 @@ function PlateLookupModal({
                 type="button"
                 onClick={() => {
                   setImageFile(null);
-                  if (imagePreview) URL.revokeObjectURL(imagePreview);
+                  if (imagePreview && imagePreview.startsWith('blob:')) URL.revokeObjectURL(imagePreview);
                   setImagePreview(null);
                 }}
                 className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white mr-2"

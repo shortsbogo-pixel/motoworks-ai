@@ -80,6 +80,7 @@ export type GeminiExtraction = {
 export async function extractMaintenanceDocument(input: {
   apiKey: string;
   model?: string;
+  baseUrl?: string;
   documentId: string;
   fileName: string;
   mimeType: string;
@@ -99,12 +100,13 @@ export async function extractMaintenanceDocument(input: {
   ].filter((m, idx, arr) => arr.indexOf(m) === idx);
 
   const fetchImpl = input.fetchImpl ?? fetch;
+  const base = (input.baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
   let lastError: Error = new Error('AI 모델 호출에 실패했습니다.');
 
   for (const model of candidateModels) {
     try {
       const response = await fetchImpl(
-        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+        `${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`,
         {
           method: 'POST',
           headers: {
@@ -361,10 +363,13 @@ export async function extractLicensePlate(input: {
   mimeType: string;
   apiKey: string;
   model?: string;
+  baseUrl?: string;
+  fetchImpl?: typeof fetch;
 }): Promise<LicensePlateExtraction> {
   const model = input.model || 'gemini-3.5-flash-lite';
   const thinkingLevel = MODEL_DEFAULT_THINKING[model] ?? 'low';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${input.apiKey}`;
+  const base = (input.baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+  const url = `${base}/v1beta/models/${model}:generateContent?key=${input.apiKey}`;
 
   const systemPrompt = [
     '대한민국 오토바이(이륜자동차) 번호판 전문 OCR 판독기다.',
@@ -416,7 +421,8 @@ export async function extractLicensePlate(input: {
     },
   };
 
-  const res = await fetch(url, {
+  const fetcher = input.fetchImpl ?? fetch;
+  const res = await fetcher(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -424,7 +430,16 @@ export async function extractLicensePlate(input: {
 
   if (!res.ok) {
     const errorText = await res.text();
-    throw new Error(`Gemini 번호판 판독 실패 (${res.status}): ${safeErrorDetail(errorText)}`);
+    const isLocationBlocked =
+      errorText.includes('User location is not supported') ||
+      errorText.includes('FAILED_PRECONDITION') ||
+      errorText.includes('location is not supported');
+    const err = new Error(`Gemini 번호판 판독 실패 (${res.status}): ${safeErrorDetail(errorText)}`);
+    if (isLocationBlocked) {
+      (err as any).isLocationBlocked = true;
+      (err as any).code = 'LOCATION_NOT_SUPPORTED';
+    }
+    throw err;
   }
 
   const result = (await res.json()) as {

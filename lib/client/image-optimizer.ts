@@ -66,3 +66,28 @@ export async function optimizeReceiptImage(
     reader.readAsDataURL(file);
   });
 }
+
+/**
+ * 모바일 환경에서 Blob URL 해제 버그를 방지하는 안정적인 Base64 데이터 URL 생성기
+ */
+export function generatePreviewDataUrl(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') {
+      resolve('');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      resolve(typeof e.target?.result === 'string' ? e.target.result : '');
+    };
+    reader.onerror = () => {
+      try {
+        resolve(URL.createObjectURL(file));
+      } catch {
+        resolve('');
+      }
+    };
+    reader.readAsDataURL(file);
+  });
+}
+

@@ -64,6 +64,9 @@ export async function POST(request: Request) {
     let rawDigits = '';
     let confidence = 1.0;
     let isUncertain = false;
+    let isLocationBlocked = false;
+    let ocrSucceeded = false;
+    let ocrErrorMessage = '';
 
     if (contentType.includes('multipart/form-data')) {
       const geminiKey = runtime.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
@@ -92,17 +95,32 @@ export async function POST(request: Request) {
       }
       const imageBase64 = btoa(binary);
 
-      const ocrResult = await extractLicensePlate({
-        imageBase64,
-        mimeType: file.type || 'image/jpeg',
-        apiKey: geminiKey,
-        model: runtime.GEMINI_PLATE_MODEL,
-      });
+      try {
+        const ocrResult = await extractLicensePlate({
+          imageBase64,
+          mimeType: file.type || 'image/jpeg',
+          apiKey: geminiKey,
+          model: runtime.GEMINI_PLATE_MODEL,
+          baseUrl: runtime.GEMINI_BASE_URL,
+        });
 
-      extractedPlate = ocrResult.full_plate;
-      rawDigits = ocrResult.plate_digits;
-      confidence = ocrResult.confidence;
-      isUncertain = ocrResult.is_uncertain;
+        extractedPlate = ocrResult.full_plate;
+        rawDigits = ocrResult.plate_digits;
+        confidence = ocrResult.confidence;
+        isUncertain = ocrResult.is_uncertain;
+        ocrSucceeded = true;
+      } catch (ocrErr: any) {
+        ocrErrorMessage = ocrErr?.message || String(ocrErr);
+        isLocationBlocked =
+          Boolean(ocrErr?.isLocationBlocked) ||
+          ocrErrorMessage.includes('User location is not supported') ||
+          ocrErrorMessage.includes('LOCATION_NOT_SUPPORTED') ||
+          ocrErrorMessage.includes('FAILED_PRECONDITION');
+
+        console.warn(
+          `[lookup-plate] License plate OCR failed: ${ocrErrorMessage} (isLocationBlocked: ${isLocationBlocked})`,
+        );
+      }
     } else {
       let body: { plateText?: string; plateDigits?: string } = {};
       try {
@@ -115,28 +133,47 @@ export async function POST(request: Request) {
       }
       extractedPlate = body.plateText || body.plateDigits || '';
       rawDigits = body.plateDigits || body.plateText || '';
+      ocrSucceeded = true;
     }
 
     const digits = extractPlateDigits(rawDigits || extractedPlate);
     if (!digits) {
-      await recordLookupNoMatch(runtime, clientIp, organizationId);
+      // 위치 제한이나 OCR 실패 시에는 무차별 대입 실패(15분 차단) 카운터를 증가시키지 않음
+      if (!isLocationBlocked && ocrSucceeded) {
+        await recordLookupNoMatch(runtime, clientIp, organizationId);
+      }
+
       await logSecurityAudit(
         runtime,
         actor.id,
         'vehicle.plate_lookup',
         'vehicle',
         'none',
-        { match_type: 'none', rawInput: extractedPlate, reason: 'no_digits' },
+        {
+          match_type: 'none',
+          rawInput: extractedPlate,
+          reason: isLocationBlocked
+            ? 'gemini_location_blocked'
+            : ocrSucceeded
+              ? 'no_digits'
+              : 'ocr_failed',
+          ocrErrorMessage: ocrErrorMessage || undefined,
+        },
         request,
       );
+
       return Response.json({
         status: 'no_match',
         matchType: 'none',
-        extractedPlate,
+        extractedPlate: '',
         plateDigits: '',
         confidence: 0,
         isUncertain: true,
-        notice: '번호판 숫자를 인식하지 못했습니다. 번호판 숫자를 직접 입력해 주세요.',
+        isLocationBlocked,
+        ocrFailed: !ocrSucceeded,
+        notice: isLocationBlocked
+          ? '클라우드 엣지 리전(Cloudflare) 제한으로 AI 자동 인식이 지원되지 않습니다. 아래 번호판 4자리를 직접 입력해 주세요.'
+          : '번호판 숫자를 자동으로 판독하지 못했습니다. 번호판 뒷자리(4자리)를 직접 입력해 주세요.',
       });
     }
 
