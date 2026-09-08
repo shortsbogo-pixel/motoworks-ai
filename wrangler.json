@@ -15,7 +15,7 @@
   "vars": {
     "BOOTSTRAP_OWNER_EMAIL": "shortsbogo@gmail.com",
     "GEMINI_VISION_MODEL": "gemini-3.6-flash",
-    "GEMINI_PLATE_MODEL": "gemini-3.5-flash-lite",
+    "GEMINI_PLATE_MODEL": "gemini-3.6-flash",
     "PLATE_HASH_SECRET": "motoworks-plate-keyed-hash-secret-2026-secure-32chars"
   }
 }

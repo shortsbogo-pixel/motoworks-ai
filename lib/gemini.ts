@@ -366,10 +366,17 @@ export async function extractLicensePlate(input: {
   baseUrl?: string;
   fetchImpl?: typeof fetch;
 }): Promise<LicensePlateExtraction> {
-  const model = input.model || 'gemini-3.5-flash-lite';
-  const thinkingLevel = MODEL_DEFAULT_THINKING[model] ?? 'low';
+  const primaryModel = input.model || 'gemini-3.6-flash';
+  const candidateModels = [
+    primaryModel,
+    'gemini-3.6-flash',
+    'gemini-3.7-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+  ].filter((m, idx, arr) => arr.indexOf(m) === idx);
+
   const base = (input.baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
-  const url = `${base}/v1beta/models/${model}:generateContent?key=${input.apiKey}`;
+  const fetcher = input.fetchImpl ?? fetch;
 
   const systemPrompt = [
     '대한민국 오토바이(이륜자동차) 번호판 전문 OCR 판독기다.',
@@ -397,71 +404,94 @@ export async function extractLicensePlate(input: {
     },
   };
 
-  const body = {
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { text: systemPrompt },
-          {
-            inlineData: {
-              mimeType: input.mimeType,
-              data: input.imageBase64,
+  let lastError: Error = new Error('Gemini 번호판 판독에 실패했습니다.');
+
+  for (const model of candidateModels) {
+    const thinkingLevel = MODEL_DEFAULT_THINKING[model] ?? 'low';
+    const url = `${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+
+    const body = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: systemPrompt },
+            {
+              inlineData: {
+                mimeType: input.mimeType,
+                data: input.imageBase64,
+              },
             },
-          },
-        ],
+          ],
+        },
+      ],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: responseSchema,
+        thinkingConfig: {
+          thinkingLevel: thinkingLevel,
+        },
       },
-    ],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: responseSchema,
-      thinkingConfig: {
-        thinkingLevel: thinkingLevel,
-      },
-    },
-  };
+    };
 
-  const fetcher = input.fetchImpl ?? fetch;
-  const res = await fetcher(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+    try {
+      const res = await fetcher(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': input.apiKey,
+        },
+        body: JSON.stringify(body),
+      });
 
-  if (!res.ok) {
-    const errorText = await res.text();
-    const isLocationBlocked =
-      errorText.includes('User location is not supported') ||
-      errorText.includes('FAILED_PRECONDITION') ||
-      errorText.includes('location is not supported');
-    const err = new Error(`Gemini 번호판 판독 실패 (${res.status}): ${safeErrorDetail(errorText)}`);
-    if (isLocationBlocked) {
-      (err as any).isLocationBlocked = true;
-      (err as any).code = 'LOCATION_NOT_SUPPORTED';
-    }
-    throw err;
-  }
+      if (!res.ok) {
+        const errorText = await res.text();
+        const isLocationBlocked =
+          errorText.includes('User location is not supported') ||
+          errorText.includes('FAILED_PRECONDITION') ||
+          errorText.includes('location is not supported');
+        const err = new Error(`Gemini 번호판 판독 실패 (${res.status}): ${safeErrorDetail(errorText)}`);
+        if (isLocationBlocked) {
+          (err as any).isLocationBlocked = true;
+          (err as any).code = 'LOCATION_NOT_SUPPORTED';
+        }
+        lastError = err;
+        if ([400, 404, 429, 503].includes(res.status) && model !== candidateModels[candidateModels.length - 1]) {
+          continue;
+        }
+        throw err;
+      }
 
-  const result = (await res.json()) as {
-    candidates?: Array<{
-      content?: {
-        parts?: Array<{ text?: string }>;
+      const result = (await res.json()) as {
+        candidates?: Array<{
+          content?: {
+            parts?: Array<{ text?: string }>;
+          };
+        }>;
       };
-    }>;
-  };
 
-  const rawJson = result.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!rawJson) {
-    throw new Error('Gemini로부터 번호판 판독 결과를 수신하지 못했습니다.');
+      const rawJson = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawJson) {
+        throw new Error('Gemini로부터 번호판 판독 결과를 수신하지 못했습니다.');
+      }
+
+      const parsed = JSON.parse(rawJson) as LicensePlateExtraction;
+      return {
+        full_plate: parsed.full_plate || parsed.plate_digits || '',
+        plate_digits: (parsed.plate_digits || '').replace(/[^\d]/g, ''),
+        region: parsed.region || null,
+        confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.85,
+        is_uncertain: Boolean(parsed.is_uncertain),
+      };
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (model !== candidateModels[candidateModels.length - 1]) {
+        continue;
+      }
+      throw lastError;
+    }
   }
 
-  const parsed = JSON.parse(rawJson) as LicensePlateExtraction;
-  return {
-    full_plate: parsed.full_plate || parsed.plate_digits || '',
-    plate_digits: (parsed.plate_digits || '').replace(/[^\d]/g, ''),
-    region: parsed.region || null,
-    confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.85,
-    is_uncertain: Boolean(parsed.is_uncertain),
-  };
+  throw lastError;
 }
 

@@ -37,4 +37,24 @@ describe('엑셀 호환', () => {
     expect(result.orderCount).toBe(1);
     expect(result.revenue).toBe(approved[0].amount);
   });
+  it('실무 엑셀 시트명(정비내역서, 렌트 관리, 차종 높임표 등) 및 서식 금액을 유연하게 인식한다', () => {
+    const wb = XLSX.utils.book_new();
+    const orderRows = [
+      { 정비번호: 'O-1', 정비일: '2026-09-03', 차종: 'PCX125', 합계금액: '55,000원' },
+      { 정비번호: 'O-2', 정비일: '2026-09-03', 차종: 'NMAX125', 금액: 70000 },
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orderRows), '정비내역서');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ 고객: '홍길동' }]), '고객목록');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ 매장: '용전' }]), '매장별 매출');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ 렌트사: '코아' }]), '렌트 관리');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ 차종: '혼다' }]), '차종 높임표');
+
+    const bytes = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const result = inspectLegacyWorkbook(bytes);
+
+    expect(result.missingSheets).toEqual([]);
+    expect(result.orderCount).toBe(2);
+    expect(result.revenue).toBe(125000);
+  });
 });
+

@@ -69,20 +69,65 @@ export function downloadLegacyWorkbook(documents: ReviewDocument[]) {
   XLSX.writeFile(buildLegacyWorkbook(documents), '정비내역서_내보내기.xlsx');
 }
 
+export const SHEET_ALIASES: Record<string, string[]> = {
+  정비내역: ['정비내역', '정비내역서', '정비 내역', '정비 내역서', '정비', '정비목록'],
+  정비항목: ['정비항목', '정비 항목', '매장별 매출', '매장별매출', '매출', '작업항목', '작업 항목'],
+  고객목록: ['고객목록', '고객 목록', '고객명단', '고객', '고객관리'],
+  렌트리스: ['렌트리스', '렌트 관리', '렌트관리', '렌트/리스', '렌트', '리스', '렌트차량'],
+  기준정보: ['기준정보', '기준 정보', '차종 높임표', '차종높임표', '차종 일람표', '차종일람표', '차종표', '단가표', '공임표'],
+};
+
+export function findMatchingSheetName(
+  sheetNames: string[],
+  category: string,
+): string | null {
+  const aliases = SHEET_ALIASES[category] || [category];
+  for (const name of sheetNames) {
+    const trimmed = name.trim();
+    if (aliases.some((alias) => alias.toLowerCase() === trimmed.toLowerCase())) {
+      return name;
+    }
+  }
+  return null;
+}
+
 export function inspectLegacyWorkbook(data: ArrayBuffer) {
   const workbook = XLSX.read(data, { type: 'array' });
-  const missingSheets = LEGACY_SHEET_NAMES.filter(
-    (name) => !workbook.SheetNames.includes(name),
-  );
-  const rows = workbook.Sheets['정비내역']
-    ? XLSX.utils.sheet_to_json<Record<string, unknown>>(
-        workbook.Sheets['정비내역'],
-      )
-    : [];
-  const revenue = rows.reduce(
-    (sum, row) => sum + Number(row['합계금액'] ?? row['금액'] ?? 0),
-    0,
-  );
+  const missingSheets: string[] = [];
+
+  for (const standardName of LEGACY_SHEET_NAMES) {
+    const matched = findMatchingSheetName(workbook.SheetNames, standardName);
+    if (!matched) {
+      missingSheets.push(standardName);
+    }
+  }
+
+  const orderSheetName = findMatchingSheetName(workbook.SheetNames, '정비내역');
+  const rows =
+    orderSheetName && workbook.Sheets[orderSheetName]
+      ? XLSX.utils.sheet_to_json<Record<string, unknown>>(
+          workbook.Sheets[orderSheetName],
+        )
+      : [];
+
+  const revenue = rows.reduce((sum, row) => {
+    const rawVal =
+      row['합계금액'] ??
+      row['금액'] ??
+      row['총금액'] ??
+      row['결제금액'] ??
+      row['매출금액'] ??
+      row['매출액'] ??
+      row['공임'] ??
+      0;
+    if (typeof rawVal === 'number') return sum + rawVal;
+    if (typeof rawVal === 'string') {
+      const clean = Number(rawVal.replace(/[^\d.-]/g, ''));
+      return sum + (isNaN(clean) ? 0 : clean);
+    }
+    return sum;
+  }, 0);
+
   return {
     sheetNames: workbook.SheetNames,
     missingSheets,
