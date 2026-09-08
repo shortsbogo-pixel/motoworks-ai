@@ -353,15 +353,14 @@ export async function extractLicensePlate(input: {
   ].join(' ');
 
   const responseSchema = {
-    type: 'object',
-    additionalProperties: false,
+    type: 'OBJECT',
     required: ['full_plate', 'plate_digits', 'confidence', 'is_uncertain'],
     properties: {
-      full_plate: { type: 'string' },
-      plate_digits: { type: 'string' },
-      region: { type: ['string', 'null'] },
-      confidence: { type: 'number' },
-      is_uncertain: { type: 'boolean' },
+      full_plate: { type: 'STRING' },
+      plate_digits: { type: 'STRING' },
+      region: { type: 'STRING', nullable: true },
+      confidence: { type: 'NUMBER' },
+      is_uncertain: { type: 'BOOLEAN' },
     },
   };
 
@@ -372,8 +371,8 @@ export async function extractLicensePlate(input: {
         parts: [
           { text: systemPrompt },
           {
-            inline_data: {
-              mime_type: input.mimeType,
+            inlineData: {
+              mimeType: input.mimeType,
               data: input.imageBase64,
             },
           },
@@ -381,10 +380,10 @@ export async function extractLicensePlate(input: {
       },
     ],
     generationConfig: {
-      response_mime_type: 'application/json',
-      response_schema: responseSchema,
-      thinking_config: {
-        thinking_level: thinkingLevel,
+      responseMimeType: 'application/json',
+      responseSchema: responseSchema,
+      thinkingConfig: {
+        thinkingLevel: thinkingLevel,
       },
     },
   };
