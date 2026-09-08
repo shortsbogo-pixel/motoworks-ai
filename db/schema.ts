@@ -322,6 +322,7 @@ export const serviceOrders = sqliteTable(
     totalAmount: integer('total_amount').notNull().default(0),
     approvedBy: text('approved_by').references(() => users.id),
     approvedAt: integer('approved_at', { mode: 'timestamp_ms' }),
+    idempotencyKey: text('idempotency_key'),
     ...ts,
   },
   (t) => [
@@ -330,6 +331,7 @@ export const serviceOrders = sqliteTable(
       t.shopId,
       t.approvedServiceDate,
     ),
+    uniqueIndex('idx_service_orders_idem').on(t.shopId, t.idempotencyKey),
   ],
 );
 export const serviceItems = sqliteTable('service_items', {

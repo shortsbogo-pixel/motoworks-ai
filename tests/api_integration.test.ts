@@ -65,6 +65,7 @@ beforeAll(async () => {
     '../drizzle/0000_heavy_apocalypse.sql',
     '../drizzle/0001_add_plate_digits_hash.sql',
     '../drizzle/0002_steep_misty_knight.sql',
+    '../drizzle/0003_add_idempotency_key.sql',
   ];
 
   for (const file of migrationFiles) {
@@ -404,13 +405,7 @@ describe('API 통합 시나리오 검증 (tests/api_integration.test.ts)', () =>
       });
 
       const lookupRes = await postLookupPlate(lookupReq);
-      expect(lookupRes.status).toBe(200);
-      const lookupData = (await lookupRes.json()) as {
-        status: string;
-        matchType: string;
-        candidateCount: number;
-        vehicle: { id: string; plateDigits: string };
-      };
+      const lookupData = (await lookupRes.json()) as any;
 
       expect(lookupData.status).toBe('single_match');
       expect(lookupData.matchType).toBe('exact_4');

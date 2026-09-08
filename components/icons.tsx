@@ -320,3 +320,31 @@ export const OctagonXIcon = createIcon(
   </>,
 );
 
+export const Plus = createIcon(
+  'plus',
+  <path d="M5 12h14m-7-7v14" />,
+);
+export const Trash = createIcon(
+  'trash',
+  <>
+    <path d="M3 6h18" />
+    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+  </>,
+);
+export const CreditCard = createIcon(
+  'credit-card',
+  <>
+    <rect width="20" height="14" x="2" y="5" rx="2" />
+    <line x1="2" x2="22" y1="10" y2="10" />
+  </>,
+);
+export const Banknote = createIcon(
+  'banknote',
+  <>
+    <rect width="20" height="12" x="2" y="6" rx="2" />
+    <circle cx="12" cy="12" r="2" />
+    <path d="M6 12h.01M18 12h.01" />
+  </>,
+);
+

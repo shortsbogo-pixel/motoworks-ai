@@ -6,7 +6,9 @@ import {
   decryptValue,
   errorResponse,
   extractPlateDigits,
+  getAllowedShops,
   hasPermission,
+  hashPii,
   hashPlateDigits,
   logSecurityAudit,
   maskName,
@@ -138,28 +140,49 @@ export async function POST(request: Request) {
       });
     }
 
-    // 5. 단계적 Fallback 질의
+    // 5. 단계적 Fallback 질의 (요청자 소속 지점 스코프 필수 적용)
+    const allowedShops = getAllowedShops(actor, 'view');
+    if (allowedShops.length === 0) {
+      return Response.json({
+        status: 'no_match',
+        matchType: 'none',
+        plateText: extractedPlate,
+        exact: null,
+        candidates: [],
+        extractedPlate,
+        plateDigits: digits,
+        confidence: 0,
+        isUncertain: true,
+        isBlocked: false,
+        notice: '접근 가능한 지점 권한이 없습니다.',
+      });
+    }
+
+    const shopPlaceholders = allowedShops.map(() => '?').join(',');
+
     // 1차 질의: 추출된 숫자 전체(4자리 또는 3자리) 해시로 조회
     const primaryHash = await hashPlateDigits(digits, runtime.PLATE_HASH_SECRET!);
     let matchType: 'exact_4' | 'fallback_3' | 'none' = digits.length === 4 ? 'exact_4' : 'fallback_3';
 
     let matchedVehicles = await runtime.DB.prepare(
-      `SELECT v.id, v.organization_id, v.shop_id, v.customer_id, v.plate_encrypted,
+      `SELECT v.id, v.organization_id, v.shop_id, v.customer_id, v.plate_encrypted, v.plate_hash,
               v.manufacturer, v.model, v.displacement_cc, v.model_year, v.certainty,
               c.name AS customer_name, c.phone_encrypted,
               s.name AS shop_name
          FROM vehicles v
          LEFT JOIN customers c ON c.id = v.customer_id
          LEFT JOIN shops s ON s.id = v.shop_id
-        WHERE v.organization_id = ?1 AND v.plate_digits_hash = ?2`,
+        WHERE v.organization_id = ? AND v.shop_id IN (${shopPlaceholders}) AND v.plate_digits_hash = ?
+        LIMIT 5`,
     )
-      .bind(organizationId, primaryHash)
+      .bind(organizationId, ...allowedShops, primaryHash)
       .all<{
         id: string;
         organization_id: string;
         shop_id: string | null;
         customer_id: string | null;
         plate_encrypted: string | null;
+        plate_hash: string | null;
         manufacturer: string | null;
         model: string | null;
         displacement_cc: number | null;
@@ -176,16 +199,17 @@ export async function POST(request: Request) {
       const last3Digits = digits.slice(-3);
       const fallbackHash = await hashPlateDigits(last3Digits, runtime.PLATE_HASH_SECRET!);
       matchedVehicles = await runtime.DB.prepare(
-        `SELECT v.id, v.organization_id, v.shop_id, v.customer_id, v.plate_encrypted,
+        `SELECT v.id, v.organization_id, v.shop_id, v.customer_id, v.plate_encrypted, v.plate_hash,
                 v.manufacturer, v.model, v.displacement_cc, v.model_year, v.certainty,
                 c.name AS customer_name, c.phone_encrypted,
                 s.name AS shop_name
            FROM vehicles v
            LEFT JOIN customers c ON c.id = v.customer_id
            LEFT JOIN shops s ON s.id = v.shop_id
-          WHERE v.organization_id = ?1 AND v.plate_digits_hash = ?2`,
+          WHERE v.organization_id = ? AND v.shop_id IN (${shopPlaceholders}) AND v.plate_digits_hash = ?
+          LIMIT 5`,
       )
-        .bind(organizationId, fallbackHash)
+        .bind(organizationId, ...allowedShops, fallbackHash)
         .all();
 
       if (matchedVehicles.results.length > 0) {
@@ -221,6 +245,9 @@ export async function POST(request: Request) {
       return Response.json({
         status: 'no_match',
         matchType: 'none',
+        plateText: extractedPlate,
+        exact: null,
+        candidates: [],
         extractedPlate,
         plateDigits: digits,
         confidence,
@@ -279,8 +306,10 @@ export async function POST(request: Request) {
         return {
           vehicleId: row.id,
           fullPlate: decryptedPlate || extractedPlate,
+          plateText: decryptedPlate || extractedPlate,
           manufacturer: row.manufacturer,
           model: row.model || '차종 미확정',
+          shopId: row.shop_id,
           shopName: row.shop_name,
           customerId: row.customer_id,
           customerName: displayCustomerName,
@@ -291,6 +320,22 @@ export async function POST(request: Request) {
         };
       }),
     );
+
+    // exact 매칭 판정 (plate_hash 일치 또는 번호판 문자열 완전 일치)
+    let exact: typeof candidates[0] | null = null;
+    if (extractedPlate.trim()) {
+      const fullPlateHash = await hashPii(extractedPlate.trim());
+      exact =
+        candidates.find((c) => {
+          const row = matchedVehicles.results.find((r) => r.id === c.vehicleId);
+          return (
+            row?.plate_hash === fullPlateHash ||
+            (c.fullPlate &&
+              c.fullPlate.replace(/\s+/g, '') ===
+                extractedPlate.trim().replace(/\s+/g, ''))
+          );
+        }) || null;
+    }
 
     // 개인정보 평문 노출 시 보안 감사로그 기록
     if (canViewPii) {
@@ -329,7 +374,10 @@ export async function POST(request: Request) {
         status: 'single_match',
         matchType,
         isFallback,
+        plateText: extractedPlate,
+        exact,
         candidate: candidates[0],
+        candidates,
         extractedPlate,
         plateDigits: digits,
         confidence,
@@ -341,6 +389,9 @@ export async function POST(request: Request) {
       status: 'multiple_matches',
       matchType,
       isFallback,
+      plateText: extractedPlate,
+      exact,
+      candidate: candidates[0],
       candidates,
       extractedPlate,
       plateDigits: digits,

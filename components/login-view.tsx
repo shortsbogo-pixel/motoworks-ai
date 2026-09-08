@@ -44,7 +44,7 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
         body: JSON.stringify({ email: email.trim(), password }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const data = (await res.json().catch(() => ({}))) as any;
 
       if (!res.ok) {
         if (res.status === 429) {
@@ -140,7 +140,7 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
           >
             {loading ? (
               <div className="flex items-center gap-2">
-                <Spinner size="sm" />
+                <Spinner className="h-4 w-4" />
                 <span>인증 확인 중...</span>
               </div>
             ) : (

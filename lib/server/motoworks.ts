@@ -547,12 +547,12 @@ export async function ensureBaseSeed(
            (id, organization_id, external_user_id, email, display_name, status, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?6)
          ON CONFLICT (external_user_id) DO UPDATE SET status = 'active', display_name = ?5, updated_at = ?6`,
-      ).bind(user.id, ORGANIZATION_ID, user.externalId, user.email, user.displayName, now),
+      ).bind(user.id, ORGANIZATION_ID, user.externalId ?? null, user.email, user.displayName, now),
       env.DB.prepare(
         `INSERT OR IGNORE INTO user_shop_roles
            (id, organization_id, user_id, shop_id, role, role_id, created_at, updated_at)
          VALUES (?1, ?2, ?3, NULL, 'admin', 'role:admin', ?4, ?4)`,
-      ).bind(`owner-role:${user.externalId}`, ORGANIZATION_ID, user.id, now),
+      ).bind(`owner-role:${user.externalId ?? user.id}`, ORGANIZATION_ID, user.id, now),
     );
   } else {
     // 일반 신규 사용자는 pending 상태로 생성 (역할 부여 없음)
@@ -561,7 +561,7 @@ export async function ensureBaseSeed(
         `INSERT OR IGNORE INTO users
            (id, organization_id, external_user_id, email, display_name, status, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?6)`,
-      ).bind(user.id, ORGANIZATION_ID, user.externalId, user.email, user.displayName, now),
+      ).bind(user.id, ORGANIZATION_ID, user.externalId ?? null, user.email, user.displayName, now),
     );
   }
 

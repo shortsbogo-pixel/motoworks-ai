@@ -258,7 +258,7 @@ describe('보안 및 인증 메커니즘 무결성 검증 (tests/auth_security.t
       });
       const meRes = await getMe(meReq);
       expect(meRes.status).toBe(200);
-      const meData = await meRes.json();
+      const meData = (await meRes.json()) as any;
       expect(meData.user.email).toBe('shortsbogo@gmail.com');
       expect(meData.user.isOwner).toBe(true);
 

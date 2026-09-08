@@ -50,6 +50,7 @@ import {
 import { shouldHighlightField, type ReviewDocument } from '@/lib/domain';
 import { optimizeReceiptImage } from '@/lib/client/image-optimizer';
 import { LoginView, type UserProfile } from '@/components/login-view';
+import { ManualOrderModal } from '@/components/manual-order-modal';
 
 export type DesignTheme = 'cockpit' | 'enterprise' | 'industrial';
 
@@ -312,6 +313,8 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notice, setNotice] = useState('');
   const [isPlateModalOpen, setIsPlateModalOpen] = useState(false);
+  const [isManualOrderModalOpen, setIsManualOrderModalOpen] = useState(false);
+  const [manualOrderInitialPlate, setManualOrderInitialPlate] = useState('');
   const [prefillPlate, setPrefillPlate] = useState('');
   const [designTheme, setDesignTheme] = useState<DesignTheme>('industrial');
   const isCockpit = designTheme === 'cockpit';
@@ -324,8 +327,11 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
   const approvedToday = documents.filter(
     (document) => document.status === 'approved',
   );
+  const approvedOrders = orders.filter(
+    (ord) => ord.status === 'approved' || ord.status === 'DB 승인완료',
+  );
   const approvedRevenue = orders.length > 0
-    ? orders.reduce((sum, ord) => sum + ord.totalAmount, 0)
+    ? approvedOrders.reduce((sum, ord) => sum + ord.totalAmount, 0)
     : approvedToday.reduce((sum, doc) => sum + doc.amount, 0);
 
   const navigate = (next: View) => {
@@ -431,7 +437,7 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#090d16] text-slate-100">
         <div className="flex flex-col items-center gap-3">
-          <Spinner size="lg" />
+          <Spinner className="h-8 w-8 text-amber-400" />
           <p className="text-sm font-mono text-slate-400">보안 세션 검증 중...</p>
         </div>
       </div>
@@ -718,7 +724,7 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
             </div>
             <Button
               type="button"
-              onClick={() => setIsPlateModalOpen(true)}
+              onClick={() => setIsManualOrderModalOpen(true)}
               className={`min-h-11 rounded-xl font-bold px-3 sm:px-4 transition flex items-center gap-1.5 ${
                 isEnterprise
                   ? 'border-2 border-blue-600 bg-white text-blue-700 hover:bg-blue-50 font-bold'
@@ -780,7 +786,7 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
               stats={dashboardStats}
               orders={orders}
               navigate={navigate}
-              onOpenPlateModal={() => setIsPlateModalOpen(true)}
+              onOpenPlateModal={() => setIsManualOrderModalOpen(true)}
             />
           )}
           {view === 'upload' && (
@@ -921,15 +927,47 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
             onClose={() => setIsPlateModalOpen(false)}
             onNewRegistration={(plate) => {
               setIsPlateModalOpen(false);
-              setPrefillPlate(plate);
-              navigate('upload');
-              setNotice(`판독된 번호판 [${plate}]이(가) 신규 접수 폼에 자동 지정되었습니다.`);
+              setManualOrderInitialPlate(plate);
+              setIsManualOrderModalOpen(true);
             }}
             onSelectCustomer={(candidate) => {
               setIsPlateModalOpen(false);
-              setPrefillPlate(candidate.fullPlate);
-              navigate('upload');
-              setNotice(`기존 고객 [${candidate.customerName} - ${candidate.model}]의 정비 접수가 시작되었습니다.`);
+              setManualOrderInitialPlate(candidate.fullPlate);
+              setIsManualOrderModalOpen(true);
+            }}
+          />
+        )}
+
+        {isManualOrderModalOpen && (
+          <ManualOrderModal
+            isOpen={isManualOrderModalOpen}
+            onClose={() => {
+              setIsManualOrderModalOpen(false);
+              setManualOrderInitialPlate('');
+            }}
+            initialPlate={manualOrderInitialPlate}
+            canDecide={Boolean(
+              currentUser?.isOwner ||
+                currentUser?.roles?.some((r: any) =>
+                  r.permissions?.includes('review_decide'),
+                ),
+            )}
+            onSuccess={async (orderId, status, isDuplicate) => {
+              await refreshAllData();
+              navigate('orders');
+              if (isDuplicate) {
+                setNotice(
+                  `동일한 요청이 이미 처리되어 기존 전표(${orderId})가 유지되었습니다.`,
+                );
+              } else if (status === 'review') {
+                setNotice(
+                  `정비 전표(${orderId})가 [검수 대기] 상태로 안전하게 등록되었습니다. 매니저 승인 후 매출에 산입됩니다.`,
+                );
+              } else {
+                setNotice(
+                  `정비 전표(${orderId})가 [승인 완료]되어 매출에 즉시 반영되었습니다.`,
+                );
+              }
             }}
           />
         )}
@@ -2338,7 +2376,13 @@ function Orders({
         vehicle: `${o.vehicleModel || '차종 미지정'} · ${o.plate || '번호 미지정'}`,
         shop: o.shopName,
         amount: o.totalAmount,
-        status: 'DB 승인완료',
+        status:
+          o.status === 'review'
+            ? '검수 대기'
+            : o.status === 'approved'
+              ? '승인 완료'
+              : o.status || 'DB 승인완료',
+        rawStatus: o.status,
       }))
     : approved.map((d) => ({
         id: d.id,
@@ -2347,6 +2391,7 @@ function Orders({
         shop: d.shopName,
         amount: d.amount,
         status: '오늘 승인',
+        rawStatus: 'approved',
       }));
 
   const paymentBreakdown = {
@@ -2356,7 +2401,7 @@ function Orders({
   };
   if (isDbLive) {
     for (const ord of orders) {
-      if (ord.payments) {
+      if (ord.status !== 'review' && ord.payments) {
         for (const p of ord.payments) {
           if (p.method === 'card') paymentBreakdown.card += p.amount;
           else if (p.method === 'cash') paymentBreakdown.cash += p.amount;
@@ -2400,7 +2445,7 @@ function Orders({
         <p className={`text-sm font-semibold ${
           isEnterprise || isIndustrial ? 'text-slate-800' : 'text-slate-300'
         }`}>
-          {isDbLive ? '실제 집계된 결제 수단별 금액' : '분할 결제 예시'}
+          {isDbLive ? '실제 집계된 결제 수단별 금액 (승인 완료 건)' : '분할 결제 예시'}
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <PaymentPart method="카드" amount={isDbLive ? paymentBreakdown.card : 30000} />
@@ -2421,6 +2466,7 @@ function OrderTable({
     shop: string;
     amount: number;
     status: string;
+    rawStatus?: string;
   }>;
 }) {
   const { isIndustrial, isEnterprise } = useDesignTheme();
@@ -2450,7 +2496,13 @@ function OrderTable({
               }`}>{row.id}</span>
               <StatusBadge
                 label={row.status}
-                tone={row.status.includes('청구') ? 'blue' : 'green'}
+                tone={
+                  row.rawStatus === 'review' || row.status === '검수 대기'
+                    ? 'amber'
+                    : row.status.includes('청구')
+                      ? 'blue'
+                      : 'green'
+                }
               />
             </div>
             <div className="flex items-baseline justify-between">
@@ -2526,7 +2578,13 @@ function OrderTable({
                 <td className="px-6 py-4">
                   <StatusBadge
                     label={row.status}
-                    tone={row.status.includes('청구') ? 'blue' : 'green'}
+                    tone={
+                      row.rawStatus === 'review' || row.status === '검수 대기'
+                        ? 'amber'
+                        : row.status.includes('청구')
+                          ? 'blue'
+                          : 'green'
+                    }
                   />
                 </td>
               </tr>
@@ -2537,6 +2595,7 @@ function OrderTable({
     </>
   );
 }
+
 
 function Customers({ customers }: { customers: CustomerRecord[] }) {
   const isDbLive = customers.length > 0;
@@ -3091,7 +3150,7 @@ function UsersView({
         }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const data = (await res.json().catch(() => ({}))) as any;
       if (!res.ok) {
         throw new Error(data.error || '계정 생성에 실패했습니다.');
       }
@@ -3120,7 +3179,7 @@ function UsersView({
           userId,
         }),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = (await res.json().catch(() => ({}))) as any;
       if (!res.ok) throw new Error(data.error || '삭제 처리에 실패했습니다.');
       setActionNotice(data.message || `'${email}' 계정이 삭제되었습니다.`);
       onRefresh?.();
@@ -3434,7 +3493,7 @@ function UsersView({
                   >
                     {formSubmitting ? (
                       <div className="flex items-center gap-1.5">
-                        <Spinner size="sm" />
+                        <Spinner className="h-4 w-4" />
                         <span>생성 중...</span>
                       </div>
                     ) : (
