@@ -1,6 +1,6 @@
 import type { ExtractedField, ReviewDocument } from './domain';
 
-export const GEMINI_DEFAULT_MODEL = 'gemini-3.8-flash';
+export const GEMINI_DEFAULT_MODEL = 'gemini-3.6-flash';
 
 export const FIELD_LABELS: Record<string, string> = {
   service_date: '정비일',
@@ -90,85 +90,113 @@ export async function extractMaintenanceDocument(input: {
   if (!input.apiKey || !input.apiKey.trim()) {
     throw new Error('Gemini API 키가 설정되지 않았습니다.');
   }
-  const model = input.model || GEMINI_DEFAULT_MODEL;
+  const primaryModel = input.model || GEMINI_DEFAULT_MODEL;
+  const candidateModels = [
+    primaryModel,
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+  ].filter((m, idx, arr) => arr.indexOf(m) === idx);
+
   const fetchImpl = input.fetchImpl ?? fetch;
-  const response = await fetchImpl(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': input.apiKey,
-      },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [
-            {
-              text: [
-                '한국 오토바이 정비내역서/영수증 사진을 정밀 구조화하는 전문 AI 판독기다.',
-                '사진에 실제로 기재된 값만 정밀하게 옮겨 적고 없는 내용을 지어내지 않는다.',
-                '한국 이륜차 현장 용어 사전을 참조해 표준 용어로 정규화하라:',
-                '- 오일류: 엔진오일(10W-40, 50%합성유, 100%합성유, 모튤, 쉘), 미션오일, 브레이크오일(DOT4)',
-                '- 구동계: 구동계 세척 및 점검, 구동계 벨트(드라이브 벨트), 무브볼(웨이트롤러), 슬라이드 피스, 클러치 슈, 클러치 아우터',
-                '- 제동/소모품: 앞 브레이크 패드, 뒤 브레이크 패드, 디스크 로터, 에어필터, 점화플러그(이리듐), 배터리 교환, 대기어/소기어/체인',
-                '- 타이어: 앞 타이어 교체, 뒤 타이어 교체, 피렐리 엔젤스쿠터, 미쉐린 시티그립, 신코 타이어',
-                '- 공임: 기본 점검 공임, 밸브 간극 조절, 캘리퍼 오버홀, 카울 탈부착 공임',
-                '차종은 혼다 PCX125, 포르자350, 야마하 NMAX125, XMAX300, SYM 조이맥스/크루심, 보이져, 대림/DNA 등 한국 다빈도 스쿠터 모델을 정확히 식별한다.',
-                '작업 내역이 여러 줄이면 service_item을 각각 별개의 항목으로 모두 반환한다.',
-                '금액(amount)은 부품비와 공임, 부가세가 포함된 최종 합계 금액을 숫자로 정규화한다.',
-                '손글씨가 흐리거나 번져 판독이 불확실한 경우 confidence를 0.90 미만으로 낮추고 validation_status를 "review"로 설정하며, 사유를 validation_message에 기록한다.',
-                'bounding_box는 문서 내 해당 글자의 실제 사각형 좌표(x, y, width, height, 0~1 상대값)를 정밀하게 추출한다.',
-                '지점은 시스템이 별도로 확정하므로 사진에서 지점을 추출하지 않는다.',
-              ].join(' '),
-            },
-          ],
-        },
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: `문서 ID: ${input.documentId}\n파일명: ${input.fileName}\n확정 작업센터: ${input.assignedShopName}\n필요한 필드를 판독하라.`,
-              },
-              {
-                inlineData: {
-                  mimeType: input.mimeType,
-                  data: arrayBufferToBase64(input.bytes),
+  let lastError: Error = new Error('AI 모델 호출에 실패했습니다.');
+
+  for (const model of candidateModels) {
+    try {
+      const response = await fetchImpl(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': input.apiKey,
+          },
+          body: JSON.stringify({
+            systemInstruction: {
+              parts: [
+                {
+                  text: [
+                    '한국 오토바이 정비내역서/영수증 사진을 정밀 구조화하는 전문 AI 판독기다.',
+                    '사진에 실제로 기재된 값만 정밀하게 옮겨 적고 없는 내용을 지어내지 않는다.',
+                    '한국 이륜차 현장 용어 사전을 참조해 표준 용어로 정규화하라:',
+                    '- 오일류: 엔진오일(10W-40, 50%합성유, 100%합성유, 모튤, 쉘), 미션오일, 브레이크오일(DOT4)',
+                    '- 구동계: 구동계 세척 및 점검, 구동계 벨트(드라이브 벨트), 무브볼(웨이트롤러), 슬라이드 피스, 클러치 슈, 클러치 아우터',
+                    '- 제동/소모품: 앞 브레이크 패드, 뒤 브레이크 패드, 디스크 로터, 에어필터, 점화플러그(이리듐), 배터리 교환, 대기어/소기어/체인',
+                    '- 타이어: 앞 타이어 교체, 뒤 타이어 교체, 피렐리 엔젤스쿠터, 미쉐린 시티그립, 신코 타이어',
+                    '- 공임: 기본 점검 공임, 밸브 간극 조절, 캘리퍼 오버홀, 카울 탈부착 공임',
+                    '차종은 혼다 PCX125, 포르자350, 야마하 NMAX125, XMAX300, SYM 조이맥스/크루심, 보이져, 대림/DNA 등 한국 다빈도 스쿠터 모델을 정확히 식별한다.',
+                    '작업 내역이 여러 줄이면 service_item을 각각 별개의 항목으로 모두 반환한다.',
+                    '금액(amount)은 부품비와 공임, 부가세가 포함된 최종 합계 금액을 숫자로 정규화한다.',
+                    '손글씨가 흐리거나 번져 판독이 불확실한 경우 confidence를 0.90 미만으로 낮추고 validation_status를 "review"로 설정하며, 사유를 validation_message에 기록한다.',
+                    'bounding_box는 문서 내 해당 글자의 실제 사각형 좌표(x, y, width, height, 0~1 상대값)를 정밀하게 추출한다.',
+                    '지점은 시스템이 별도로 확정하므로 사진에서 지점을 추출하지 않는다.',
+                  ].join(' '),
                 },
+              ],
+            },
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    text: `문서 ID: ${input.documentId}\n파일명: ${input.fileName}\n확정 작업센터: ${input.assignedShopName}\n필요한 필드를 판독하라.`,
+                  },
+                  {
+                    inlineData: {
+                      mimeType: input.mimeType,
+                      data: arrayBufferToBase64(input.bytes),
+                    },
+                  },
+                ],
               },
             ],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseJsonSchema: extractionResponseSchema,
-          thinkingConfig: { thinkingLevel: 'medium' },
+            generationConfig: {
+              responseMimeType: 'application/json',
+              responseJsonSchema: extractionResponseSchema,
+              thinkingConfig: { thinkingLevel: 'medium' },
+            },
+          }),
         },
-      }),
-    },
-  );
+      );
 
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Gemini API ${response.status}: ${safeErrorDetail(detail)}`);
+      if (!response.ok) {
+        const detail = await response.text();
+        const err = new Error(`Gemini API ${response.status} (${model}): ${safeErrorDetail(detail)}`);
+        lastError = err;
+        // If 429 (quota), 503 (high demand), or 404 (model unavailable), try fallback model
+        if ([429, 503, 404].includes(response.status) && model !== candidateModels[candidateModels.length - 1]) {
+          continue;
+        }
+        throw err;
+      }
+
+      const payload = (await response.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        promptFeedback?: { blockReason?: string };
+      };
+      const text = payload.candidates?.[0]?.content?.parts
+        ?.map((part) => part.text ?? '')
+        .join('')
+        .trim();
+      if (!text) {
+        throw new Error(
+          payload.promptFeedback?.blockReason
+            ? `Gemini 응답 차단: ${payload.promptFeedback.blockReason}`
+            : 'Gemini가 판독 결과를 반환하지 않았습니다.',
+        );
+      }
+      return normalizeExtraction(JSON.parse(text), input.documentId);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // Try next candidate model if available
+      if (model !== candidateModels[candidateModels.length - 1]) {
+        continue;
+      }
+      throw lastError;
+    }
   }
 
-  const payload = (await response.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    promptFeedback?: { blockReason?: string };
-  };
-  const text = payload.candidates?.[0]?.content?.parts
-    ?.map((part) => part.text ?? '')
-    .join('')
-    .trim();
-  if (!text) {
-    throw new Error(
-      payload.promptFeedback?.blockReason
-        ? `Gemini 응답 차단: ${payload.promptFeedback.blockReason}`
-        : 'Gemini가 판독 결과를 반환하지 않았습니다.',
-    );
-  }
-  return normalizeExtraction(JSON.parse(text), input.documentId);
+  throw lastError;
 }
 
 export function normalizeExtraction(

@@ -122,18 +122,40 @@ export async function POST(request: Request) {
         ).bind(jobId, ORGANIZATION_ID, shopId, documentId, model, startedAt),
       ]);
 
+      let extraction: GeminiExtraction;
+      let aiFailureDetail: string | null = null;
+
+      if (geminiKey) {
+        try {
+          extraction = await extractMaintenanceDocument({
+            apiKey: geminiKey,
+            model,
+            documentId,
+            fileName: file.name,
+            mimeType: file.type,
+            bytes,
+            assignedShopName: shopName,
+          });
+        } catch (aiError) {
+          aiFailureDetail =
+            aiError instanceof Error ? aiError.message : 'AI 호출 실패';
+          extraction = createLocalFallbackExtraction(
+            documentId,
+            file.name,
+            shopName,
+          );
+          extraction.fields = extraction.fields.map((field) => ({
+            ...field,
+            confidence: 0.5,
+            validation_status: 'review' as const,
+            validation_message: `AI 판독 일시 지연/제한 (${aiFailureDetail?.slice(0, 80)}). 사진을 확인하고 직접 입력/검수해주세요.`,
+          }));
+        }
+      } else {
+        extraction = createLocalFallbackExtraction(documentId, file.name, shopName);
+      }
+
       try {
-        const extraction = geminiKey
-          ? await extractMaintenanceDocument({
-              apiKey: geminiKey,
-              model,
-              documentId,
-              fileName: file.name,
-              mimeType: file.type,
-              bytes,
-              assignedShopName: shopName,
-            })
-          : createLocalFallbackExtraction(documentId, file.name, shopName);
         const protectedExtraction = await protectExtraction(
           extraction,
           encryptionKey,
@@ -145,6 +167,10 @@ export async function POST(request: Request) {
               field.confidence < 0.96 || field.validation_status !== 'valid',
           )
           .map((field) => field.key);
+        if (aiFailureDetail && !reasons.includes('ai_fallback')) {
+          reasons.unshift('ai_fallback');
+        }
+
         await runtime.DB.batch([
           ...protectedExtraction.fields.map((field, index) =>
             runtime.DB.prepare(
@@ -181,9 +207,14 @@ export async function POST(request: Request) {
           ),
           runtime.DB.prepare(
             `UPDATE extraction_jobs
-                SET status = 'succeeded', completed_at = ?2, updated_at = ?2
+                SET status = ?2, error_message = ?3, completed_at = ?4, updated_at = ?4
               WHERE id = ?1`,
-          ).bind(jobId, Date.now()),
+          ).bind(
+            jobId,
+            aiFailureDetail ? 'fallback_review' : 'succeeded',
+            aiFailureDetail ? aiFailureDetail.slice(0, 500) : null,
+            Date.now(),
+          ),
           runtime.DB.prepare(
             `INSERT INTO audit_logs
                (id, organization_id, shop_id, actor_user_id, action, entity_type, entity_id, after_json, user_agent, created_at)
@@ -194,7 +225,12 @@ export async function POST(request: Request) {
             shopId,
             user.id,
             documentId,
-            JSON.stringify({ provider: 'google', model, reviewReasons: reasons }),
+            JSON.stringify({
+              provider: 'google',
+              model,
+              reviewReasons: reasons,
+              aiFailureDetail,
+            }),
             request.headers.get('user-agent'),
             Date.now(),
           ),
@@ -208,13 +244,13 @@ export async function POST(request: Request) {
             fieldIds,
           }),
         );
-      } catch (error) {
+      } catch (dbError) {
         const message =
-          error instanceof Error ? error.message : 'AI 판독에 실패했습니다.';
+          dbError instanceof Error ? dbError.message : '검수 데이터 저장에 실패했습니다.';
         failures.push({ fileName: file.name, message });
         await runtime.DB.prepare(
           `UPDATE extraction_jobs
-              SET status = 'failed', error_code = 'GEMINI_EXTRACTION_FAILED', error_message = ?2,
+              SET status = 'failed', error_code = 'DB_INSERT_FAILED', error_message = ?2,
                   completed_at = ?3, updated_at = ?3
             WHERE id = ?1`,
         )
