@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>모토웍스 AI 현장 실사 및 번호판 OCR 실측 기록표</title>
+  <style>
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #1a1a1a;
+      background: #f4f5f7;
+      padding: 24px;
+      line-height: 1.4;
+    }
+
+    .sheet-container {
+      max-width: 960px;
+      margin: 0 auto;
+      background: #ffffff;
+      padding: 36px 40px;
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    }
+
+    .action-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid #e5e7eb;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: #2563eb;
+      color: #ffffff;
+    }
+    .btn-primary:hover {
+      background: #1d4ed8;
+    }
+
+    .btn-secondary {
+      background: #f3f4f6;
+      color: #374151;
+      border-color: #d1d5db;
+    }
+    .btn-secondary:hover {
+      background: #e5e7eb;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      color: #111827;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: #6b7280;
+    }
+
+    .meta-box {
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      background: #f9fafb;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px 24px;
+      font-size: 13px;
+    }
+
+    .meta-item {
+      display: flex;
+      align-items: center;
+    }
+
+    .meta-label {
+      width: 100px;
+      font-weight: 700;
+      color: #4b5563;
+    }
+
+    .meta-value {
+      flex: 1;
+      border-bottom: 1px dotted #9ca3af;
+      padding-bottom: 2px;
+      min-height: 20px;
+    }
+
+    .checklist-box {
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      font-size: 12.5px;
+    }
+
+    .checklist-title {
+      font-weight: 700;
+      color: #1e40af;
+      margin-bottom: 6px;
+    }
+
+    .checklist-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px 16px;
+    }
+
+    .checklist-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #1f2937;
+    }
+
+    table.record-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+      font-size: 12px;
+    }
+
+    table.record-table th,
+    table.record-table td {
+      border: 1px solid #cbd5e1;
+      padding: 6px 8px;
+      text-align: center;
+    }
+
+    table.record-table th {
+      background: #f1f5f9;
+      font-weight: 700;
+      color: #334155;
+    }
+
+    table.record-table tr:nth-child(even) td {
+      background: #fbfcfe;
+    }
+
+    .col-no { width: 34px; }
+    .col-model { width: 95px; }
+    .col-plate { width: 140px; }
+    .col-ocr-digits { width: 85px; }
+    .col-match { width: 55px; }
+    .col-time { width: 60px; }
+    .col-notes { width: auto; text-align: left !important; }
+
+    .sample-row td {
+      color: #64748b;
+      font-style: italic;
+      background: #f8fafc !important;
+    }
+
+    .guidance-box {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 16px;
+      font-size: 12px;
+    }
+
+    .card {
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 12px 14px;
+      background: #ffffff;
+    }
+
+    .card-title {
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: #0f172a;
+    }
+
+    .card ul {
+      padding-left: 18px;
+      color: #475569;
+    }
+
+    .card li {
+      margin-bottom: 4px;
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+        padding: 0;
+      }
+      .sheet-container {
+        box-shadow: none;
+        padding: 8mm 10mm;
+        max-width: 100%;
+      }
+      .action-bar {
+        display: none !important;
+      }
+      table.record-table {
+        font-size: 11px;
+      }
+      table.record-table th,
+      table.record-table td {
+        padding: 4px 6px;
+      }
+      @page {
+        size: A4 portrait;
+        margin: 6mm;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="sheet-container">
+  <div class="action-bar">
+    <div>
+      <span style="font-weight: 700; color: #1e3a8a;">MOTOWORKS AI 현장 검증 도구</span>
+      <span style="color: #6b7280; font-size: 13px; margin-left: 8px;">(A4 출력 및 엑셀 다운로드 지원)</span>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-secondary" onclick="downloadCSV()">
+        📥 엑셀(CSV) 양식 다운로드
+      </button>
+      <button class="btn btn-primary" onclick="window.print()">
+        🖨️ A4 인쇄 / PDF 저장
+      </button>
+    </div>
+  </div>
+
+  <header>
+    <h1>모토웍스 AI 현장 실사 및 번호판 OCR 실측 기록표</h1>
+    <div class="subtitle">이륜차 번호판 AI 판독 정밀도 및 신규 등록 재조회(Round-trip) 실측용</div>
+  </header>
+
+  <div class="meta-box">
+    <div class="meta-item">
+      <span class="meta-label">실사 일시:</span>
+      <span class="meta-value">2026년 &nbsp;&nbsp;&nbsp;&nbsp;월 &nbsp;&nbsp;&nbsp;&nbsp;일 &nbsp;&nbsp;&nbsp;&nbsp;시</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">실사 장소:</span>
+      <span class="meta-value">[ &nbsp; ] 용전센터 &nbsp;&nbsp; [ &nbsp; ] 자양센터 &nbsp;&nbsp; [ &nbsp; ] 기타:</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">입회/테스터:</span>
+      <span class="meta-value">윤생수 대표, &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(인)</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">테스트 기기:</span>
+      <span class="meta-value">예: 갤럭시 S24 / 아이폰 15 Pro</span>
+    </div>
+  </div>
+
+  <div class="checklist-box">
+    <div class="checklist-title">■ 현장 핵심 점검 체크포인트</div>
+    <div class="checklist-grid">
+      <div class="checklist-item">
+        <input type="checkbox"> <strong>1. 신규 등록 후 재조회 왕복</strong> (명세서 승인 → 즉시 번호판 재조회 연동)
+      </div>
+      <div class="checklist-item">
+        <input type="checkbox"> <strong>2. 지점 권한 격리</strong> (용전/자양 매니저 로그인 시 타 지점 데이터 비노출)
+      </div>
+      <div class="checklist-item">
+        <input type="checkbox"> <strong>3. 3자리 구형 번호판 Fallback</strong> (3자리 입력/판독 시 후보 목록 정상 노출)
+      </div>
+      <div class="checklist-item">
+        <input type="checkbox"> <strong>4. 사진 자동 압축</strong> (현장 모바일 카메라 원본 업로드 시 속도 지연 없음)
+      </div>
+    </div>
+  </div>
+
+  <table class="record-table" id="recordTable">
+    <thead>
+      <tr>
+        <th class="col-no">No</th>
+        <th class="col-model">차종 / 모델</th>
+        <th class="col-plate">실제 번호판 (정답)</th>
+        <th class="col-ocr-digits">AI 판독<br>(4자리)</th>
+        <th class="col-match">일치<br>(O/X)</th>
+        <th class="col-time">소요<br>시간</th>
+        <th class="col-notes">촬영 환경 및 특이사항 (먼지, 반사광, 각도, 실패 원인 등)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="sample-row">
+        <td>예</td>
+        <td>혼다 PCX125</td>
+        <td>대전 동구 나 5678</td>
+        <td>5678</td>
+        <td>O</td>
+        <td>1.9s</td>
+        <td>배달통 그림자 있음, 정상 인식 (참고 예시)</td>
+      </tr>
+      <tr><td>1</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>2</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>3</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>4</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>5</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>6</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>7</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>8</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>9</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>10</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>11</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>12</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>13</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>14</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>15</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>16</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>17</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>18</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>19</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td>20</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    </tbody>
+  </table>
+
+  <div class="guidance-box">
+    <div class="card">
+      <div class="card-title">📌 실측 시 주의사항</div>
+      <ul>
+        <li><strong>판독 실패/오독 건:</strong> 해당 번호판의 <strong>원본 사진을 스마트폰 갤러리에 보관</strong>해 주세요. 이후 AI 프롬프트 및 전처리 튜닝에 사용됩니다.</li>
+        <li><strong>다양한 표본:</strong> 배달대행 바이크(먼지/가드 장착), 구형 3자리 번호판, 반사광 심한 각도 등을 고루 포함해 주세요.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title">📊 실측 종합 통계 (현장 집계란)</div>
+      <ul>
+        <li><strong>총 테스트 대수:</strong> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 대</li>
+        <li><strong>4자리 정확 일치 건수:</strong> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 건 (정확도: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; %)</li>
+        <li><strong>평균 판독 소요 시간:</strong> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 초</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+  function downloadCSV() {
+    const csvContent = "\uFEFF" + 
+      "No,차종/모델,실제 번호판(정답),AI 판독 4자리(plate_digits),일치여부(O/X),소요시간(초),촬영환경 및 특이사항(먼지/반사광/각도/차종 등)\n" +
+      "예시,혼다 PCX125,대전 동구 나 5678,5678,O,1.9,배달통 그늘 환경 정상 인식\n" +
+      Array.from({length: 20}, (_, i) => `${i + 1},,,,,,\n`).join("");
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", "모토웍스AI_현장실측기록표.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+</script>
+
+</body>
+</html>
