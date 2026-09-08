@@ -327,12 +327,6 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
   const approvedToday = documents.filter(
     (document) => document.status === 'approved',
   );
-  const approvedOrders = orders.filter(
-    (ord) => ord.status === 'approved' || ord.status === 'DB 승인완료',
-  );
-  const approvedRevenue = orders.length > 0
-    ? approvedOrders.reduce((sum, ord) => sum + ord.totalAmount, 0)
-    : approvedToday.reduce((sum, doc) => sum + doc.amount, 0);
 
   const navigate = (next: View) => {
     setView(next);
@@ -780,9 +774,6 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
           {view === 'dashboard' && (
             <Dashboard
               documents={documents}
-              pending={pending}
-              approvedCount={approvedToday.length}
-              approvedRevenue={approvedRevenue}
               stats={dashboardStats}
               orders={orders}
               navigate={navigate}
@@ -830,7 +821,6 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
           {view === 'rentals' && <Rentals rentals={rentals} />}
           {view === 'analytics' && (
             <Analytics
-              approvedRevenue={approvedRevenue}
               orders={orders}
               stats={dashboardStats}
             />
@@ -979,27 +969,18 @@ export function AppShell({ userName: initialUserName }: { userName?: string }) {
 
 function Dashboard({
   documents = [],
-  pending,
-  approvedCount,
-  approvedRevenue,
   stats,
   orders,
   navigate,
   onOpenPlateModal,
 }: {
   documents?: ReviewDocument[];
-  pending: number;
-  approvedCount: number;
-  approvedRevenue: number;
   stats: DashboardStats | null;
   orders: OrderRecord[];
   navigate: (view: View) => void;
   onOpenPlateModal?: () => void;
 }) {
   const { isIndustrial, isEnterprise } = useDesignTheme();
-  const effectivePending = stats ? stats.pendingReviewCount : pending;
-  const effectiveApprovedCount = stats ? stats.totalOrders : approvedCount;
-  const effectiveRevenue = stats ? stats.totalRevenue : approvedRevenue;
 
   const displayRows = orders.length > 0
     ? orders.slice(0, 5).map((o) => ({
@@ -1008,7 +989,7 @@ function Dashboard({
         vehicle: `${o.vehicleModel || '차종 미지정'} · ${o.plate || '번호 미지정'}`,
         shop: o.shopName,
         amount: o.totalAmount,
-        status: 'DB 승인완료',
+        status: o.status,
       }))
     : [];
 
@@ -1095,31 +1076,35 @@ function Dashboard({
       <section className="grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-4">
         <Metric
           label="검수 대기"
-          value={`${effectivePending}건`}
-          note={effectivePending > 0 ? "사람의 확인이 필요한 정비서" : "모든 정비서 검수 완료"}
+          value={`${stats?.pendingReviewCount ?? 0}건`}
+          loading={!stats}
+          note={stats && stats.pendingReviewCount > 0 ? "사람의 확인이 필요한 정비서" : "모든 정비서 검수 완료"}
           icon={ClipboardCheck}
           tone="amber"
           onClick={() => navigate('review')}
         />
         <Metric
-          label="오늘 승인"
-          value={`${effectiveApprovedCount}건`}
+          label="총 정비건수"
+          value={`${stats?.totalOrders ?? 0}건`}
+          loading={!stats}
           note="DB 영구 저장 완료된 정비"
           icon={BadgeCheck}
           tone="green"
         />
         <Metric
-          label="오늘 반영 매출"
-          value={won.format(effectiveRevenue)}
+          label="전체 매출"
+          value={won.format(stats?.totalRevenue ?? 0)}
+          loading={!stats}
           note="검수 승인분만 정밀 집계"
           icon={CircleDollarSign}
           tone="blue"
         />
         <Metric
-          label="AI 자동등록"
-          value="0건"
-          note="기준 신뢰도 96% 미만 자동차단"
-          icon={ScanLine}
+          label="렌트 미수금"
+          value={won.format(stats?.rentalOutstanding ?? 0)}
+          loading={!stats}
+          note="정산 청구 대기액"
+          icon={WalletCards}
           tone="purple"
         />
       </section>
@@ -1296,13 +1281,15 @@ function Metric({
   icon: Icon,
   tone,
   onClick,
+  loading = false,
 }: {
   label: string;
-  value: string;
+  value: React.ReactNode;
   note: string;
   icon: typeof Activity;
   tone: string;
   onClick?: () => void;
+  loading?: boolean;
 }) {
   const { isIndustrial, isEnterprise } = useDesignTheme();
   const tones: Record<string, string> = {
@@ -1360,9 +1347,15 @@ function Metric({
       <p className={`text-xs font-bold tracking-wide uppercase ${
         isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-400'
       }`}>{label}</p>
-      <p className={`mt-1 text-[22px] font-black tracking-[-.04em] font-mono tabular-nums sm:text-[28px] ${
-        isEnterprise || isIndustrial ? 'text-slate-950' : 'text-slate-100'
-      }`}>{value}</p>
+      {loading ? (
+        <div className={`mt-2 h-7 w-28 animate-pulse rounded-md ${
+          isEnterprise || isIndustrial ? 'bg-slate-200' : 'bg-slate-800'
+        }`} />
+      ) : (
+        <p className={`mt-1 text-[22px] font-black tracking-[-.04em] font-mono tabular-nums sm:text-[28px] ${
+          isEnterprise || isIndustrial ? 'text-slate-950' : 'text-slate-100'
+        }`}>{value}</p>
+      )}
       <p className={`mt-2 line-clamp-2 text-xs leading-4 ${
         isEnterprise || isIndustrial ? 'text-slate-500 font-medium' : 'text-slate-500'
       }`}>{note}</p>
@@ -2376,12 +2369,7 @@ function Orders({
         vehicle: `${o.vehicleModel || '차종 미지정'} · ${o.plate || '번호 미지정'}`,
         shop: o.shopName,
         amount: o.totalAmount,
-        status:
-          o.status === 'review'
-            ? '검수 대기'
-            : o.status === 'approved'
-              ? '승인 완료'
-              : o.status || 'DB 승인완료',
+        status: o.status || 'approved',
         rawStatus: o.status,
       }))
     : approved.map((d) => ({
@@ -2390,7 +2378,7 @@ function Orders({
         vehicle: d.vehicleLabel,
         shop: d.shopName,
         amount: d.amount,
-        status: '오늘 승인',
+        status: 'approved',
         rawStatus: 'approved',
       }));
 
@@ -2401,7 +2389,7 @@ function Orders({
   };
   if (isDbLive) {
     for (const ord of orders) {
-      if (ord.status !== 'review' && ord.payments) {
+      if (ord.status === 'approved' && ord.payments) {
         for (const p of ord.payments) {
           if (p.method === 'card') paymentBreakdown.card += p.amount;
           else if (p.method === 'cash') paymentBreakdown.cash += p.amount;
@@ -2495,14 +2483,8 @@ function OrderTable({
                 isEnterprise || isIndustrial ? 'text-slate-500' : 'text-slate-400'
               }`}>{row.id}</span>
               <StatusBadge
-                label={row.status}
-                tone={
-                  row.rawStatus === 'review' || row.status === '검수 대기'
-                    ? 'amber'
-                    : row.status.includes('청구')
-                      ? 'blue'
-                      : 'green'
-                }
+                label={getOrderStatusLabel(row.status)}
+                tone={getOrderStatusTone(row.status)}
               />
             </div>
             <div className="flex items-baseline justify-between">
@@ -2577,14 +2559,8 @@ function OrderTable({
                 </td>
                 <td className="px-6 py-4">
                   <StatusBadge
-                    label={row.status}
-                    tone={
-                      row.rawStatus === 'review' || row.status === '검수 대기'
-                        ? 'amber'
-                        : row.status.includes('청구')
-                          ? 'blue'
-                          : 'green'
-                    }
+                    label={getOrderStatusLabel(row.status)}
+                    tone={getOrderStatusTone(row.status)}
                   />
                 </td>
               </tr>
@@ -2800,17 +2776,15 @@ function Rentals({ rentals }: { rentals: RentalRecord[] }) {
 }
 
 function Analytics({
-  approvedRevenue,
   orders,
   stats,
 }: {
-  approvedRevenue: number;
   orders: OrderRecord[];
   stats: DashboardStats | null;
 }) {
-  const currentRevenue = stats ? stats.totalRevenue : approvedRevenue;
-  const currentOrders = stats ? stats.totalOrders : orders.length;
-  const rentalDue = stats ? stats.rentalOutstanding : 0;
+  const currentRevenue = stats?.totalRevenue ?? 0;
+  const currentOrders = stats?.totalOrders ?? orders.length;
+  const rentalDue = stats?.rentalOutstanding ?? 0;
   const liveShops = stats?.shops && stats.shops.length > 0
     ? stats.shops.map((s) => ({
         name: s.name,
@@ -2827,6 +2801,7 @@ function Analytics({
         <Metric
           label="승인 반영 매출"
           value={won.format(currentRevenue)}
+          loading={!stats}
           note={`실제 DB 승인 ${currentOrders}건 집계`}
           icon={BadgeCheck}
           tone="green"
@@ -2834,6 +2809,7 @@ function Analytics({
         <Metric
           label="렌트·리스 미수금"
           value={won.format(rentalDue)}
+          loading={!stats}
           note="정산 청구 대기액"
           icon={WalletCards}
           tone="blue"
@@ -3740,12 +3716,45 @@ function PaymentPart({ method, amount }: { method: string; amount: number }) {
     </div>
   );
 }
+
+export function getOrderStatusLabel(status?: string): string {
+  switch (status) {
+    case 'approved':
+      return '승인 완료';
+    case 'review':
+      return '검수 대기';
+    case 'draft':
+      return '임시 저장';
+    case 'void':
+      return '반려/무효';
+    default:
+      return status || '확인 필요';
+  }
+}
+
+export function getOrderStatusTone(status?: string): 'green' | 'amber' | 'blue' | 'rose' {
+  switch (status) {
+    case 'approved':
+    case '승인 완료':
+    case '오늘 승인':
+      return 'green';
+    case 'review':
+    case '검수 대기':
+      return 'amber';
+    case 'void':
+    case '반려/무효':
+      return 'rose';
+    default:
+      return 'blue';
+  }
+}
+
 function StatusBadge({
   label,
   tone,
 }: {
   label: string;
-  tone: 'green' | 'amber' | 'blue';
+  tone: 'green' | 'amber' | 'blue' | 'rose';
 }) {
   const { isEnterprise, isIndustrial } = useDesignTheme();
   const tones = {
@@ -3764,6 +3773,11 @@ function StatusBadge({
       : isIndustrial
         ? 'bg-white text-slate-900 border-2 border-slate-900 font-black shadow-xs'
         : 'bg-sky-500/15 text-sky-400 border border-sky-500/30',
+    rose: isEnterprise
+      ? 'bg-rose-50 text-rose-700 border border-rose-300'
+      : isIndustrial
+        ? 'bg-rose-500 text-white border border-rose-600 font-black shadow-xs'
+        : 'bg-rose-500/15 text-rose-400 border border-rose-500/30',
   };
   return (
     <span
